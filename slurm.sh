@@ -14,10 +14,12 @@ export IMG_FOLDER=/Your/Image/Folder
 srun torchrun --nnodes=$SLURM_NNODES --nproc_per_node=8 \
     --rdzv_id=$SLURM_JOB_ID --rdzv_backend=c10d --rdzv_endpoint=$HOSTNAME:29501 blip3o/train/train_mem.py \
     --deepspeed ./scripts/zero1.json \
-    --model_name_or_path Qwen/Qwen2.5-VL-7B-Instruct  \
+    --model_name_or_path Qwen/Qwen3-1.7B  \
     --version qwen \
     --data_type "mix" \
     --image_folder ${IMG_FOLDER} \
+    --vision_tower google/siglip2-so400m-patch16-512 \
+    --freeze_backbone False \
     --gen_vision_tower eva-clip-E-14-plus \
     --gen_projector_type mlp2x_gelu \
     --mm_projector_type mlp2x_gelu \
@@ -49,4 +51,4 @@ srun torchrun --nnodes=$SLURM_NNODES --nproc_per_node=8 \
     --n_query 64 \
     --n_und_query 0 \
     --report_to wandb \
-    --run_name blip3o_qwen_vl_7b
+    --run_name blip3o_qwen3
