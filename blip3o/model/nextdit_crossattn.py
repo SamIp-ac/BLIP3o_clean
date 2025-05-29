@@ -22,7 +22,7 @@ class NextDiTCrossAttnConfig(PretrainedConfig):
         multiple_of: int = 256,
         ffn_dim_multiplier: Optional[float] = None,
         norm_eps: float = 1e-5,
-        latent_embedding_size: int = 3584,
+        latent_embedding_size: int = 2560,
         learn_sigma: bool = False,
         qk_norm: bool = True,
         _gradient_checkpointing: bool = True,

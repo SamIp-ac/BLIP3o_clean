@@ -13,9 +13,9 @@ from transformers.generation.utils import GenerateOutput
 
 from blip3o.model.blip3o_arch import blip3oMetaModel, blip3oMetaForCausalLM
 
-from transformers import Qwen2_5_VLConfig, Qwen2_5_VLModel, Qwen2_5_VLForConditionalGeneration
+from transformers import Qwen3Config, Qwen3Model, Qwen3ForCausalLM
 
-from blip3o.constants import UND_IMAGE_TOKEN_IDX
+from blip3o.constants import UND_IMAGE_TOKEN_IDX, DEFAULT_IM_START_TOKEN_IDX
 
 
 
@@ -26,22 +26,22 @@ from diffusers.models import AutoencoderKL
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 
 
-class blip3oQwenConfig(Qwen2_5_VLConfig):
+class blip3oQwenConfig(Qwen3Config):
     model_type = "blip3o_qwen"
 
 
-class blip3oQwenModel(blip3oMetaModel, Qwen2_5_VLModel):
+class blip3oQwenModel(blip3oMetaModel, Qwen3Model):
     config_class = blip3oQwenConfig
 
-    def __init__(self, config: Qwen2_5_VLConfig):
+    def __init__(self, config: Qwen3Config):
         super(blip3oQwenModel, self).__init__(config)
 
 
-class blip3oQwenForCausalLM(Qwen2_5_VLForConditionalGeneration, blip3oMetaForCausalLM):
+class blip3oQwenForCausalLM(Qwen3ForCausalLM, blip3oMetaForCausalLM):
     config_class = blip3oQwenConfig
 
     def __init__(self, config):
-        Qwen2_5_VLForConditionalGeneration.__init__(self, config)
+        Qwen3ForCausalLM.__init__(self, config)
         config.model_type = "blip3o_qwen"
 
         self.model = blip3oQwenModel(config)
@@ -68,7 +68,6 @@ class blip3oQwenForCausalLM(Qwen2_5_VLForConditionalGeneration, blip3oMetaForCau
         output_hidden_states: Optional[bool] = None,
         gen_image: Optional[torch.FloatTensor] = None,
         und_image: Optional[torch.FloatTensor] = None,
-        grid_thw: Optional[torch.FloatTensor] = None,
         image_sizes: Optional[List[List[int]]] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None
@@ -79,7 +78,6 @@ class blip3oQwenForCausalLM(Qwen2_5_VLForConditionalGeneration, blip3oMetaForCau
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-        
         if inputs_embeds is None:
             (
                 input_ids,
@@ -97,7 +95,6 @@ class blip3oQwenForCausalLM(Qwen2_5_VLForConditionalGeneration, blip3oMetaForCau
                 labels,
                 gen_image,
                 und_image,
-                grid_thw,
                 i_s_pos,
                 image_sizes
             )
@@ -118,8 +115,10 @@ class blip3oQwenForCausalLM(Qwen2_5_VLForConditionalGeneration, blip3oMetaForCau
         logits = self.lm_head(hidden_states)
         logits = logits.float()
         
-        total_loss = None
-        if labels is not None:
+
+        ## image understanding loss
+        loss = 0
+        if und_image is not None:
             # Shift so that tokens < n predict n
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
@@ -132,38 +131,41 @@ class blip3oQwenForCausalLM(Qwen2_5_VLForConditionalGeneration, blip3oMetaForCau
             loss = loss_fct(shift_logits, shift_labels)
 
 
-            # compute image loss
-            # target_img_embeds = torch.clone(inputs_embeds.detach())[:,1:,:] # get target image emb
-            img_loss_funct = torch.nn.MSELoss()
-            # img_hidden_states = self.get_model().down_projector(hidden_states[:,-self.get_n_query():,:])
+
+        # image generation loss 
+        img_loss = 0
+        if gen_image is not None:
             img_hidden_states = []
-            
             for b in range(hidden_states.shape[0]):
-                img_hidden_states.append(hidden_states[b,i_s_pos[b]:i_s_pos[b]+64,:])
-            img_hidden_states = torch.stack(img_hidden_states,dim=0)
+                if not i_s_pos[b] == -1:
+                    img_hidden_states.append(hidden_states[b,i_s_pos[b]:i_s_pos[b]+64, :])
+            
+            img_hidden_states = torch.stack(img_hidden_states, dim=0)
             img_hidden_states = self.get_model().down_projector(img_hidden_states)
-            # img_loss = 0.0
-            if latents is None:
-                img_loss = img_loss_funct(img_hidden_states, torch.clone(img_hidden_states.detach()))
-            else:
-                bsz = latents.shape[0]
-                # device = latents.device
-                dtype = latents.dtype
-                noise = torch.randn_like(latents, device=latents.device)
-                u = torch.rand(size=(bsz,), device="cpu")
-                indices = (u * self.get_model().noise_scheduler.config.num_train_timesteps).long()
-                timesteps = self.get_model().noise_scheduler.timesteps[indices].to(device=latents.device)
-                sigmas = self.get_sigmas(timesteps, latents.device, n_dim=latents.ndim, dtype=dtype)
-                noisy_latents = (1.0 - sigmas) * latents + sigmas * noise
-                noise_pred = self.get_model().dit(
-                    x=noisy_latents,
-                    timestep=timesteps,
-                    z_latents=self.mask_drop(img_hidden_states),
-                )
-                target = noise - latents
-                img_loss = F.mse_loss(noise_pred.float(), target.float(), reduction="mean")
-            print(f"img loss {img_loss}")
-            total_loss = img_loss
+            bsz = latents.shape[0]
+            dtype = latents.dtype
+            noise = torch.randn_like(latents, device=latents.device)
+            u = torch.rand(size=(bsz,), device="cpu")
+            indices = (u * self.get_model().noise_scheduler.config.num_train_timesteps).long()
+            timesteps = self.get_model().noise_scheduler.timesteps[indices].to(device=latents.device)
+            sigmas = self.get_sigmas(timesteps, latents.device, n_dim=latents.ndim, dtype=dtype)
+            noisy_latents = (1.0 - sigmas) * latents + sigmas * noise
+            noise_pred = self.get_model().dit(
+                x=noisy_latents,
+                timestep=timesteps,
+                z_latents=self.mask_drop(img_hidden_states),
+            )
+            target = noise - latents
+            img_loss = F.mse_loss(noise_pred.float(), target.float(), reduction="mean")
+
+
+
+
+
+        print(f"img loss {img_loss}, text loss {loss}")
+        total_loss = img_loss + loss
+
+
 
         return CausalLMOutputWithPast(
             loss=total_loss,
@@ -233,7 +235,7 @@ class blip3oQwenForCausalLM(Qwen2_5_VLForConditionalGeneration, blip3oMetaForCau
         device = self.get_model().device
         attention_mask = inputs.attention_mask.to(device)
         input_ids = inputs.input_ids.to(device)  # B x N
-        input_ids = torch.cat([input_ids, torch.tensor([[151665]]).to(device)], dim=1)
+        input_ids = torch.cat([input_ids, torch.tensor([[DEFAULT_IM_START_TOKEN_IDX]]).to(device)], dim=1)
         # breakpoint()
 
 
@@ -322,7 +324,6 @@ class blip3oQwenForCausalLM(Qwen2_5_VLForConditionalGeneration, blip3oMetaForCau
             latents = scheduler.step(noise_pred, t, latents).prev_sample
 
         # samples = self.decode_latents(latents, return_tensor=return_tensor)
-        # breakpoint()
         return latents
 
     def decode_latents(self, latents, normalize=True, return_tensor=False):

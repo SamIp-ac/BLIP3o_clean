@@ -12,7 +12,7 @@ import glob
 import transformers
 import tokenizers
 import random
-from blip3o.constants import IGNORE_INDEX, DEFAULT_IMAGE_TOKEN, IMAGE_TOKEN_IDX
+from blip3o.constants import IGNORE_INDEX, DEFAULT_IMAGE_TOKEN, IMAGE_TOKEN_IDX, UND_IMAGE_TOKEN_IDX
 from torch.utils.data import Dataset
 from blip3o.train.blip3o_trainer import blip3oTrainer
 from blip3o import conversation as conversation_lib
@@ -25,7 +25,7 @@ from datasets.utils.logging import set_verbosity_info
 from transformers import logging as tf_logging
 import torchvision.transforms as T
 from torchvision.transforms.functional import InterpolationMode
-from transformers import AutoProcessor
+from transformers import AutoProcessor, SiglipImageProcessor
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 transform_und_images = T.Compose([T.Resize(448, interpolation=InterpolationMode.BICUBIC, antialias=True), T.CenterCrop(448)])
@@ -52,7 +52,8 @@ IS_TOKENIZER_GREATER_THAN_0_14 = version.parse(tokenizers.__version__) >= versio
 class ModelArguments:
     model_name_or_path: Optional[str] = field(default="facebook/opt-125m")
     version: Optional[str] = field(default="v0")
-    freeze_backbone: bool = field(default=True)
+    freeze_backbone: bool = field(default=False)
+    freeze_vision_tower: bool = field(default=True)
     tune_mm_mlp_adapter: bool = field(default=False)
     vision_tower: Optional[str] = field(default=None)
     gen_vision_tower: Optional[str] = field(default=None)
@@ -68,7 +69,7 @@ class ModelArguments:
     mm_vision_select_feature: Optional[str] = field(default="patch")
     n_query: Optional[int] = field(default=729)  # clip 576, siglip 729
     n_und_query: Optional[int] = field(default=729)  # clip 576, siglip 729
-    gen_pooling: Optional[str] = field(default="all")  # options are: pool2d_3, pool2d_9, seq_3, seq_9, seq_27
+    gen_pooling: Optional[str] = field(default="early_pool2d_4")  # options are: pool2d_3, pool2d_9, seq_3, seq_9, seq_27
 
 
 @dataclass
@@ -77,7 +78,6 @@ class DataArguments:
     lazy_preprocess: bool = False
     is_multimodal: bool = False
     image_folder: Optional[str] = field(default=None)
-    journeyDB_folder: Optional[str] = field(default=None)
     shortcaption_image_folder: Optional[str] = field(default=None)
     data_type: Optional[str] = field(default="mix")
     image_aspect_ratio: str = "square"
@@ -326,7 +326,7 @@ def preprocess_multimodal(sources: Sequence[str], data_args: DataArguments) -> D
     is_multimodal = data_args.is_multimodal
     if not is_multimodal:
         return sources
-    und_placeholder = "<|vision_start|>" + "<|image_pad|>" * data_args.n_und_query + "<|vision_end|>"
+    und_placeholder = "[IMG]" + "<image>" * data_args.n_und_query + "[/IMG]"
     gen_placeholder = ""
     # "[IMG]" + "<image>" * data_args.n_query + "[/IMG]"
     inst_type = None
@@ -338,6 +338,7 @@ def preprocess_multimodal(sources: Sequence[str], data_args: DataArguments) -> D
             elif sentence["from"] == "gpt" and "<image>" in sentence["value"]:
                 sentence["value"] = sentence["value"].replace(DEFAULT_IMAGE_TOKEN, gen_placeholder).strip()
                 inst_type = "gen"
+ 
     return sources, inst_type
 
 
@@ -399,92 +400,6 @@ def preprocess_qwen(sources, tokenizer: transformers.PreTrainedTokenizer, has_im
 
 
 
-def preprocess_llama3(
-    sources,
-    tokenizer: transformers.PreTrainedTokenizer,
-    has_image: bool = False,
-    max_len=2048,
-    system_message: str = "You are a helpful language and vision assistant. You are able to understand the visual content that the user provides, and assist the user with a variety of tasks using natural language.",
-) -> Dict:
-    # roles = {"human": "<|start_header_id|>user<|end_header_id|>", "gpt": "<|start_header_id|>assistant<|end_header_id|>"}
-    roles = {"human": "user", "gpt": "assistant"}
-
-    # Add image tokens to tokenizer as a special tokens
-    # Use a deepcopy of tokenizer so that we don't modify on the tokenizer
-    tokenizer = copy.deepcopy(tokenizer)
-    # When there is actually an image, we add the image tokens as a special token
-    if has_image:
-        tokenizer.add_tokens(["<image>"], special_tokens=True)
-    image_token_index = tokenizer.convert_tokens_to_ids("<image>")
-    bos_token_id = tokenizer.convert_tokens_to_ids("<|begin_of_text|>")
-    start_header_id = tokenizer.convert_tokens_to_ids("<|start_header_id|>")
-    end_header_id = tokenizer.convert_tokens_to_ids("<|end_header_id|>")
-    eot_id = tokenizer.convert_tokens_to_ids("<|eot_id|>")
-
-    unmask_tokens = ["<|begin_of_text|>", "<|start_header_id|>", "<|end_header_id|>", "<|eot_id|>", "\n\n"]
-    unmask_tokens_idx = [tokenizer.convert_tokens_to_ids(tok) for tok in unmask_tokens]
-
-    # After update, calling tokenizer of llama3 will
-    # auto add bos id for the tokens. ヽ(｀⌒´)ﾉ
-    def safe_tokenizer_llama3(text):
-        input_ids = tokenizer(text).input_ids
-        if input_ids[0] == bos_token_id:
-            input_ids = input_ids[1:]
-        return input_ids
-
-    nl_tokens = tokenizer.convert_tokens_to_ids("\n\n")
-    # Apply prompt templates
-    input_ids, targets = [], []
-    for i, source in enumerate(sources):
-        if roles[source[0]["from"]] != roles["human"]:
-            source = source[1:]
-
-        input_id, target = [], []
-
-        # New version, use apply chat template
-        # Build system message for each sentence
-        input_id += tokenizer.apply_chat_template([{"role" : "system", "content" : system_message}])
-        target += [IGNORE_INDEX] * len(input_id)
-
-        for conv in source:
-            try:
-                role = conv["role"]
-                content = conv["content"]
-            except:
-                role = conv["from"]
-                content = conv["value"]
-
-            role =  roles.get(role, role)
-            
-            conv = [{"role" : role, "content" : content}]
-            # First is bos token we don't need here
-            encode_id = tokenizer.apply_chat_template(conv)[1:]
-            input_id += encode_id
-            if role in ["user", "system"]:
-                target += [IGNORE_INDEX] * len(encode_id)
-            else:
-                target += encode_id
-        
-
-                    
-        assert len(input_id) == len(target), f"{len(input_id)} != {len(target)}"
-        for idx, encode_id in enumerate(input_id):
-            if encode_id in unmask_tokens_idx:
-                target[idx] = encode_id
-            if encode_id == image_token_index:
-                input_id[idx] = IMAGE_TOKEN_INDEX
-        input_ids.append(input_id)
-        targets.append(target)
-    input_ids = torch.tensor(input_ids, dtype=torch.long)
-    targets = torch.tensor(targets, dtype=torch.long)
-
-    return dict(
-        input_ids=input_ids,  # tensor(bs x seq_len)
-        labels=targets,  # tensor(bs x seq_len)
-    )
-
-
-
 def preprocess_plain(
     sources: Sequence[str],
     tokenizer: transformers.PreTrainedTokenizer,
@@ -506,6 +421,7 @@ def preprocess_plain(
     return dict(input_ids=input_ids, labels=targets)
 
 
+
 def preprocess(
     sources: Sequence[str],
     tokenizer: transformers.PreTrainedTokenizer,
@@ -520,8 +436,6 @@ def preprocess(
     """
     if conversation_lib.default_conversation.sep_style == conversation_lib.SeparatorStyle.PLAIN:
         return preprocess_plain(sources, tokenizer)
-    if conversation_lib.default_conversation.version == "llama3":
-        return preprocess_llama3(sources, tokenizer, has_image=has_image)
     if conversation_lib.default_conversation.version == "qwen":
         return preprocess_qwen(sources, tokenizer, has_image=has_image)
     # add end signal and concatenate together
@@ -569,24 +483,22 @@ class LazySupervisedMixDataset(Dataset):
         list_data_dict = []
 
 
-        # load journeyDB_T2I data with json file 
+        # load journeyDB_T2I data
         # train_dataset = load_dataset("json", data_files='/fsx/sfr/data/jiuhai/hub/datasets--JourneyDB--JourneyDB/snapshots/e191aa61ca37e5e4418707ade4df5deb5c6d5d8f/data/train/train_caption_only.jsonl', split="train", num_proc=64)
-        # if args.journeyDB_folder is not None:
-        #     train_dataset = load_dataset("json", data_files=os.path.join(args.journeyDB_folder, "data/train/train_caption_only.jsonl"), split="train", num_proc=64)
-        #     train_dataset = train_dataset.add_column('type', len(train_dataset) * ['journeyDB_T2I'])
-        #     train_dataset = train_dataset.add_column('image', len(train_dataset) * [None])
-        #     train_dataset = train_dataset.rename_column("caption", "txt")
-        #     train_dataset = train_dataset.rename_column("img_path", "image_path")
-        #     train_dataset = train_dataset.remove_columns([col for col in train_dataset.column_names if not col in (
-        #         ["txt", "image", "type", "image_path"])])
-        #     print(f"finish loading journeyDB {len(train_dataset)}")
+        # train_dataset = train_dataset.add_column('type', len(train_dataset) * ['journeyDB_T2I'])
+        # train_dataset = train_dataset.add_column('image', len(train_dataset) * [None])
+        # train_dataset = train_dataset.rename_column("caption", "txt")
+        # train_dataset = train_dataset.rename_column("img_path", "image_path")
+        # train_dataset = train_dataset.remove_columns([col for col in train_dataset.column_names if not col in (
+        #     ["txt", "image", "type", "image_path"])])
+        # print(f"finish loading journeyDB {len(train_dataset)}")
         
 
 
         ###################################### text to image ####################################### 
         data_files = glob.glob(os.path.join(self.data_args.image_folder, "*.tar"))
         ## text to image
-        train_dataset = load_dataset("webdataset", data_files=data_files, split="train", num_proc=128)
+        train_dataset = load_dataset("webdataset", data_files=data_files, split="train", cache_dir='/fsx/sfr/data/jiuhai/', num_proc=128)
         train_dataset = train_dataset.rename_column("jpg", "image")
         train_dataset = train_dataset.add_column('type', len(train_dataset) * ['T2I'])
         train_dataset = train_dataset.add_column('image_path', len(train_dataset) * [None])
@@ -595,6 +507,22 @@ class LazySupervisedMixDataset(Dataset):
         print(f"finish loading image {len(train_dataset)}")
         list_data_dict.append(train_dataset)
             
+
+
+        ###################################### image to text ####################################### 
+        data_files = glob.glob(os.path.join(self.data_args.image_folder, "*.tar"))
+        ## text to image
+        train_dataset = load_dataset("webdataset", data_files=data_files, split="train", cache_dir='/fsx/sfr/data/jiuhai/', num_proc=128)
+        train_dataset = train_dataset.rename_column("jpg", "image")
+        train_dataset = train_dataset.add_column('type', len(train_dataset) * ['I2T'])
+        train_dataset = train_dataset.add_column('image_path', len(train_dataset) * [None])
+        train_dataset = train_dataset.remove_columns([col for col in train_dataset.column_names if not col in (
+            ["image", "txt", "type", "image_path"])])
+        print(f"finish loading image {len(train_dataset)}")
+        list_data_dict.append(train_dataset)
+
+
+
 
         if len(list_data_dict) > 1:
             list_data_dict = concatenate_datasets(list_data_dict)
@@ -629,6 +557,7 @@ class LazySupervisedMixDataset(Dataset):
     def __getitem__(self, i) -> Dict[str, torch.Tensor]:
 
         while True:
+
             sources = self.list_data_dict[i]
 
             if sources["type"] == "T2I" or sources["type"] == "journeyDB_T2I":
@@ -638,17 +567,23 @@ class LazySupervisedMixDataset(Dataset):
                 ]
 
 
-            elif sources["type"] == "I2I" or sources["type"] == "journeyDB_I2I":
+            elif sources["type"] == "I2T":
                 sources["conversations"] = [
                     {
                         "from": "human",
-                        "value": f"<image>\nPlease reconstruct the given image.",
+                        "value": f"<image>\nProvide a detailed description of the given image.",
                     },
-                    {"from": "gpt", "value": ""},
+                    {"from": "gpt", "value": f"{sources['txt']}"},
                 ]
+                
+            elif sources["type"] == "SFT":
+                ## get the first 6 round conversations to aviod long context length
+                if len(sources["conversations"]) > 8:
+                    sources["conversations"] =  sources["conversations"][:6]
 
             else:
                 raise ValueError("Unknown source type. Please check the 'type' in 'sources'.")
+
 
             if "image" in sources:
 
@@ -674,7 +609,7 @@ class LazySupervisedMixDataset(Dataset):
                         images = processor.preprocess(images, return_tensors="pt")["pixel_values"]
                     return images
 
-                if sources["type"] == "T2I" or sources["type"] == "I2I":
+                if sources["type"] == "T2I" or sources["type"] == "I2T":
                     image_files = self.list_data_dict[i]["image"]
                 else:
                     image_files = self.list_data_dict[i]["image_path"]
@@ -690,12 +625,11 @@ class LazySupervisedMixDataset(Dataset):
 
                 for img in image_files:
                     try:
-                        if sources["type"] == "T2I" or sources["type"] == "I2I":
+                        if sources["type"] == "T2I" or sources["type"] == "I2T":
                             img = img.convert("RGB")
                         elif sources["type"] == "journeyDB_T2I" or sources["type"] == "journeyDB_I2I":
                             if sources["type"] == "journeyDB_T2I" or sources["type"] == "journeyDB_I2I":
-                                image_path = os.path.join(args.journeyDB_folder, "data", "train", "imgs", img)
-                                # image_path = os.path.join('/fsx/sfr/data/jiuhai/hub/datasets--JourneyDB--JourneyDB/snapshots/e191aa61ca37e5e4418707ade4df5deb5c6d5d8f/data/train/imgs', img)
+                                image_path = os.path.join('/fsx/sfr/data/jiuhai/hub/datasets--JourneyDB--JourneyDB/snapshots/e191aa61ca37e5e4418707ade4df5deb5c6d5d8f/data/train/imgs', img)
                             else:
                                 raise ValueError("Unknown source type. Please check the 'type' in 'sources'.")
                             img = Image.open(image_path).convert("RGB")
@@ -710,6 +644,11 @@ class LazySupervisedMixDataset(Dataset):
                         temp = img_process(
                             images,
                             self.data_args.gen_image_processor,
+                            self.data_args.image_aspect_ratio,
+                        )
+                        temp = img_process(
+                            images,
+                            self.data_args.image_processor,
                             self.data_args.image_aspect_ratio,
                         )
                     except Exception as e:
@@ -742,18 +681,12 @@ class LazySupervisedMixDataset(Dataset):
                     )
 
                 elif inst_type == "und":
-
-                    resized_images = [transform_und_images(img) for img in images]
-
-                    image_inputs = self.data_args.image_processor(resized_images, return_tensors="pt")
-
-                    data_dict["und_image"] = image_inputs.pixel_values
-                    data_dict["grid_thw"] = image_inputs.image_grid_thw
-                    data_dict["gen_image"] = img_process(
-                        resized_images,
-                        self.data_args.gen_image_processor,
+                    data_dict["und_image"] = img_process(
+                        images,
+                        self.data_args.image_processor,
                         self.data_args.image_aspect_ratio,
                     )
+
 
             elif self.data_args.is_multimodal:
                 crop_size = self.data_args.image_processor.crop_size
@@ -761,6 +694,8 @@ class LazySupervisedMixDataset(Dataset):
 
             data_dict["ids"] = self.list_data_dict[i]["id"] if "id" in self.list_data_dict[i] else "unk"
             return data_dict
+
+
 
 
 @dataclass
@@ -775,17 +710,22 @@ class DataCollatorForSupervisedDataset(object):
         multi_labels = []
         i_s_pos = []
         for input_id, label in zip(input_ids, labels):
-            input_id = input_id[: self.tokenizer.model_max_length - 65]
-            label = label[: self.tokenizer.model_max_length - 65]
-            i_s_pos.append(input_id.shape[0]+1)
-            img_id = torch.full((65,), IMAGE_TOKEN_IDX, dtype=input_id.dtype, device=input_id.device)
-            img_id[0] = 151665
-            input_id = torch.cat([input_id, img_id])
-            img_label = torch.full((65,), IMAGE_TOKEN_IDX, dtype=label.dtype, device=label.device)
-            img_label[0] = 151665
-            label = torch.cat([label, img_label])
-            multi_input_ids.append(input_id)
-            multi_labels.append(label)
+            if not UND_IMAGE_TOKEN_IDX in input_id:
+                input_id = input_id[: self.tokenizer.model_max_length - 65]
+                label = label[: self.tokenizer.model_max_length - 65]
+                i_s_pos.append(input_id.shape[0]+1)
+                img_id = torch.full((65,), IMAGE_TOKEN_IDX, dtype=input_id.dtype, device=input_id.device)
+                img_id[0] = 151665
+                input_id = torch.cat([input_id, img_id])
+                img_label = torch.full((65,), IMAGE_TOKEN_IDX, dtype=label.dtype, device=label.device)
+                img_label[0] = 151665
+                label = torch.cat([label, img_label])
+                multi_input_ids.append(input_id)
+                multi_labels.append(label)
+            else:
+                i_s_pos.append(-1)
+                multi_input_ids.append(input_id)
+                multi_labels.append(label)
 
         input_ids = multi_input_ids
         labels = multi_labels
@@ -804,13 +744,12 @@ class DataCollatorForSupervisedDataset(object):
 
         batch_gen_images = []
         batch_und_images = []
-        batch_grid_thw = []
 
         for instance in instances:
             if "gen_image" in instance:
                 batch_gen_images.append(instance["gen_image"])
 
-
+        # print(f"batch_gen_images {batch_gen_images}")
         if len(batch_gen_images) > 0:
             if all(x is not None and y.shape == batch_gen_images[0][0].shape for x in batch_gen_images for y in x):
                 batch["gen_image"] = torch.cat([images for images in batch_gen_images], dim=0)
@@ -822,23 +761,22 @@ class DataCollatorForSupervisedDataset(object):
 
         for instance in instances:
             if "und_image" in instance:
-                batch_und_images.append(instance["und_image"].unsqueeze(0))  ## 1*1024*1176
-                batch_grid_thw.append(instance["grid_thw"])  ## 1*3
+                batch_und_images.append(instance["und_image"])
 
-
-        # print(f"batch_und_images {batch_und_images}")
         if len(batch_und_images) > 0:
-            batch["und_image"] = torch.cat([images for images in batch_und_images], dim=0)
-            batch["grid_thw"] = torch.cat([images for images in batch_grid_thw], dim=0)
+            if all(x is not None and y.shape == batch_und_images[0][0].shape for x in batch_und_images for y in x):
+                batch["und_image"] = torch.cat([images for images in batch_und_images], dim=0)
+            else:
+                batch["und_image"] = batch_und_images
         else:
             batch["und_image"] = None
-            batch["grid_thw"] = None
-
         batch["ids"] = ids
 
         batch["i_s_pos"] = i_s_pos
 
         return batch
+
+
 
 
 def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, data_args) -> Dict:
@@ -887,34 +825,25 @@ def train(attn_implementation=None):
                 ),
             )
         )
-        
-    ## if there exists vision tower for image understanind, we will load LLaMA LLM, otherwise will load Qwen-VL
-    if model_args.vision_tower is not None:
-        model = blip3oLlamaForCausalLM.from_pretrained(
-            model_args.model_name_or_path,
-            cache_dir=training_args.cache_dir,
-            attn_implementation=attn_implementation,
-            torch_dtype=(torch.bfloat16 if training_args.bf16 else None),
-            **bnb_model_from_pretrained_args,
-        )
-    else:
-        model = blip3oQwenForCausalLM.from_pretrained(
-            model_args.model_name_or_path,
-            cache_dir=training_args.cache_dir,
-            attn_implementation=attn_implementation,
-            torch_dtype=(torch.bfloat16 if training_args.bf16 else None),
-            **bnb_model_from_pretrained_args,
-        )
+
+    
+    model = blip3oQwenForCausalLM.from_pretrained(
+        model_args.model_name_or_path,
+        cache_dir=training_args.cache_dir,
+        attn_implementation=attn_implementation,
+        torch_dtype=(torch.bfloat16 if training_args.bf16 else None),
+        **bnb_model_from_pretrained_args,
+    )
 
     model.config.use_cache = False
 
     if model_args.freeze_backbone:
         for (n, p) in model.get_model().named_parameters():
             p.requires_grad = False
-        for (n, p) in model.visual.named_parameters():
-            p.requires_grad = False
         for (n, p) in model.lm_head.named_parameters():
             p.requires_grad = False
+
+     
     
     if training_args.gradient_checkpointing:
         if hasattr(model, "enable_input_require_grads"):
@@ -925,14 +854,17 @@ def train(attn_implementation=None):
                 output.requires_grad_(True)
 
             model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
-    
-    try:
-        tokenizer = AutoProcessor.from_pretrained(model_args.model_name_or_path).tokenizer
-    except Exception as e:
+    if "Qwen" in model_args.model_name_or_path or "qwen" in model_args.model_name_or_path:
         tokenizer = AutoProcessor.from_pretrained(model_args.model_name_or_path)
-        
-    tokenizer.model_max_length = training_args.model_max_length
-
+        tokenizer.model_max_length = training_args.model_max_length
+    else:
+        tokenizer = transformers.AutoTokenizer.from_pretrained(
+            model_args.model_name_or_path,
+            cache_dir=training_args.cache_dir,
+            model_max_length=training_args.model_max_length,
+            padding_side="right",
+            use_fast=False,
+        )
     # tokenizer.pad_token = tokenizer.unk_token
     if tokenizer.pad_token is None:
         smart_tokenizer_and_embedding_resize(
@@ -943,6 +875,7 @@ def train(attn_implementation=None):
             tokenizer=tokenizer,
             model=model,
         )
+        
     elif not "<image>" in tokenizer.get_added_vocab():
         smart_tokenizer_and_embedding_resize(
             special_tokens_dict=dict(additional_special_tokens=["[IMG]", "[/IMG]", "<image>"]),
@@ -952,15 +885,15 @@ def train(attn_implementation=None):
     if model_args.version in conversation_lib.conv_templates:
         conversation_lib.default_conversation = conversation_lib.conv_templates[model_args.version]
     else:
-        conversation_lib.default_conversation = conversation_lib.conv_templates["llama3"]
+        conversation_lib.default_conversation = conversation_lib.conv_templates["qwen"]
     rank0_print(f"Using conversation format: {conversation_lib.default_conversation.version}")
-
 
 
     # if model_args.vision_tower is not None:
     model.get_model().initialize_vision_modules(model_args=model_args, fsdp=training_args.fsdp)
 
-    ## generation vision tower
+
+    ## freeze generation vision tower
     gen_vision_tower = model.get_gen_vision_tower()
     gen_vision_tower.to(
         dtype=torch.bfloat16 if training_args.bf16 else torch.float16,
@@ -968,9 +901,25 @@ def train(attn_implementation=None):
     )
     gen_vision_tower.requires_grad_(False)
 
-    data_args.gen_image_processor = gen_vision_tower.image_processor
-    data_args.image_processor = AutoProcessor.from_pretrained(model_args.model_name_or_path).image_processor
 
+    ## freeze understanding vision tower
+    vision_tower = model.get_vision_tower()
+    vision_tower.to(
+        dtype=torch.bfloat16 if training_args.bf16 else torch.float16,
+        device=training_args.device,
+    )
+    vision_tower.requires_grad_(False)
+    
+
+
+    ## vision tower processor
+    if 'eva' in model_args.gen_vision_tower:
+        data_args.gen_image_processor = gen_vision_tower.image_processor
+    elif 'siglip2' in model_args.gen_vision_tower:
+        data_args.gen_image_processor = SiglipImageProcessor.from_pretrained(model_args.gen_vision_tower)
+
+
+    data_args.image_processor = SiglipImageProcessor.from_pretrained(model_args.vision_tower)
     data_args.is_multimodal = True
     data_args.n_query = model_args.n_query
     data_args.n_und_query = model_args.n_und_query

@@ -16,20 +16,10 @@ class blip3oMetaModel:
     def __init__(self, config):
         super(blip3oMetaModel, self).__init__(config)
 
-        if hasattr(config, "mm_vision_tower"):
-            # self.vision_tower = build_vision_tower(config, delay_load=True)
-            # self.mm_projector = build_vision_projector(config)
-            self.down_projector = build_down_projector(config)
-
-            if 'unpad' in getattr(config, 'mm_patch_merge_type', ''):
-                self.image_newline = nn.Parameter(
-                    torch.empty(config.hidden_size, dtype=self.dtype)
-                )
 
 
         if hasattr(config, "gen_vision_tower"):
             self.gen_vision_tower = build_gen_vision_tower(config, delay_load=True)
-            # self.gen_projector = build_gen_vision_projector(config)
             self.latent_queries = nn.Parameter(torch.randn(1, config.n_query, config.hidden_size))
             print(f" latent query size {self.latent_queries.shape}")
 
@@ -41,11 +31,11 @@ class blip3oMetaModel:
             self.dit, self.noise_scheduler = build_dit(config)
 
 
-    # def get_vision_tower(self):
-    #     vision_tower = getattr(self, 'vision_tower', None)
-    #     if type(vision_tower) is list:
-    #         vision_tower = vision_tower[0]
-    #     return vision_tower
+    def get_vision_tower(self):
+        vision_tower = getattr(self, 'vision_tower', None)
+        if type(vision_tower) is list:
+            vision_tower = vision_tower[0]
+        return vision_tower
 
 
     def get_gen_vision_tower(self):
@@ -78,7 +68,22 @@ class blip3oMetaModel:
             print("DiT load from checkpoint!!!")
             for p in self.dit.parameters():
                 p.requires_grad = True
+
+
+        if self.get_vision_tower() is None:
+            vision_tower = build_vision_tower(model_args)
+            if fsdp is not None and len(fsdp) > 0:
+                self.vision_tower = [vision_tower]
+            else:
+                self.vision_tower = vision_tower
+        else:
+            if fsdp is not None and len(fsdp) > 0:
+                vision_tower = self.vision_tower[0]
+            else:
+                vision_tower = self.vision_tower
+            vision_tower.load_model()
     
+
 
         if self.get_gen_vision_tower() is None:
             gen_vision_tower = build_gen_vision_tower(model_args)
@@ -97,10 +102,15 @@ class blip3oMetaModel:
 
         self.config.use_mm_proj = True
         self.config.mm_projector_type = getattr(model_args, 'mm_projector_type', 'linear')
-        # self.config.gen_projector_type = getattr(model_args, 'gen_projector_type', 'linear')
+
+        self.config.mm_hidden_size = vision_tower.config.hidden_size
 
 
-        self.config.gen_hidden_size = gen_vision_tower.hidden_size
+        if 'eva' in model_args.gen_vision_tower:
+            self.config.gen_hidden_size = gen_vision_tower.hidden_size
+        elif 'siglip2' in model_args.gen_vision_tower:
+            self.config.gen_hidden_size = gen_vision_tower.config.hidden_size
+
 
         self.config.mm_vision_select_layer = mm_vision_select_layer
         self.config.mm_vision_select_feature = mm_vision_select_feature
@@ -108,29 +118,29 @@ class blip3oMetaModel:
         self.config.n_query = model_args.n_query
         self.config.gen_pooling = model_args.gen_pooling
 
-        # if getattr(self, 'mm_projector', None) is None:
-        #     print("random initiation the mm_project !!!")
-        #     self.mm_projector = build_vision_projector(self.config)
 
-        #     if 'unpad' in mm_patch_merge_type:
-        #         embed_std = 1 / torch.sqrt(torch.tensor(self.config.hidden_size, dtype=self.dtype))
-        #         self.image_newline = nn.Parameter(
-        #             torch.randn(self.config.hidden_size, dtype=self.dtype) * embed_std
-        #         )
-        # else:
-        #     # In case it is frozen by LoRA
-        #     for p in self.mm_projector.parameters():
-        #         p.requires_grad = True
+        if getattr(self, 'mm_projector', None) is None:
+            print("random initiation the image understanding projection !!!")
+            self.mm_projector = build_vision_projector(self.config)
+            if 'unpad' in mm_patch_merge_type:
+                embed_std = 1 / torch.sqrt(torch.tensor(self.config.hidden_size, dtype=self.dtype))
+                self.image_newline = nn.Parameter(
+                    torch.randn(self.config.hidden_size, dtype=self.dtype) * embed_std
+                )
+        else:
+            print("Image understanding projection load from checkpoint!!!")
+            for p in self.mm_projector.parameters():
+                p.requires_grad = True
 
 
 
         if getattr(self, 'down_projector', None) is None:
-            print("random initiation the down_projector !!!")
             self.down_projector = build_down_projector(self.config)
         else:
-            # In case it is frozen by LoRA
             for p in self.down_projector.parameters():
                 p.requires_grad = True
+
+
 
         if getattr(self, 'latent_queries', None) is None:
             print("random initiation the latent_queries !!!")
@@ -145,9 +155,7 @@ class blip3oMetaModel:
             def get_w(weights, keyword):
                 return {k.split(keyword + '.')[1]: v for k, v in weights.items() if keyword in k}
 
-            # self.mm_projector.load_state_dict(get_w(mm_projector_weights, 'mm_projector'))
 
-        
 
 def unpad_image(tensor, original_size):
     """
@@ -193,13 +201,12 @@ class blip3oMetaForCausalLM(ABC):
         return self.get_model().get_gen_vision_tower()
 
     def encode_image(self, images):
-        # breakpoint()
+
         gen_vision_tower = self.get_gen_vision_tower()
         device = gen_vision_tower.device
         images = images.to(device)
         prompt_image_embeds = gen_vision_tower(images)
-        if 'early' in self.get_gen_pooling():
-            prompt_image_embeds = self.pool_img(prompt_image_embeds)
+        prompt_image_embeds = self.pool_img(prompt_image_embeds)
         num_img, _, c = prompt_image_embeds.shape
         # prompt_image_embeds = prompt_image_embeds.contiguous().view(-1, c)
 
@@ -220,9 +227,6 @@ class blip3oMetaForCausalLM(ABC):
     def get_mm_projector(self):
         return self.get_model().mm_projector
 
-    def get_gen_projector(self):
-        return None
-    
 
     def get_n_query(self):
         return self.get_model().config.n_query
@@ -230,15 +234,18 @@ class blip3oMetaForCausalLM(ABC):
     def get_gen_pooling(self):
         return self.get_model().config.gen_pooling
 
+
+
     def pool_img(self, image_features):
         num_img, n, c = image_features.shape
         gen_pooling = self.get_gen_pooling()
-        # n_query = self.get_n_query()
+        n_query = self.get_n_query()
         stride = int(gen_pooling.split('_')[-1])
         sqrt_n = int(n**0.5)
-        image_features = image_features.permute(0, 2, 1).view(num_img, c, sqrt_n, sqrt_n)
-        image_features = F.avg_pool2d(image_features, kernel_size=(stride, stride), stride=stride)
-        # image_features = image_features.view(num_img, c, -1).permute(0,2,1).contiguous()
+        image_features = image_features.view(-1, sqrt_n, sqrt_n, c)
+        image_features = (
+            nn.functional.adaptive_avg_pool2d(image_features.permute(0, 3, 1, 2), int(n_query**0.5))
+        )
         return image_features
 
     def get_sigmas(self, timesteps, device, n_dim=4, dtype=torch.float32):
@@ -263,103 +270,52 @@ class blip3oMetaForCausalLM(ABC):
 
     def prepare_inputs_labels_for_multimodal(
         self, input_ids, position_ids, attention_mask, past_key_values, labels,
-        gen_images, und_images, grid_thw, i_s_pos, image_sizes=None
+        gen_images, und_images, i_s_pos, image_sizes=None
     ):
-        pad_ids = 128256
-        vision_tower = self.visual
+
+        vision_tower = self.get_vision_tower()
+        mm_projector = self.get_mm_projector()
         gen_vision_tower = self.get_gen_vision_tower()
         if (gen_images is None and und_images is None) or input_ids.shape[1] == 1:
             return input_ids, position_ids, attention_mask, past_key_values, None, labels, None, None, None
         
 
 
-
-        prompt_image_embeds = gen_vision_tower(gen_images) # TODO: check dimension
-      
-        if 'early' in self.get_gen_pooling():
+        if not gen_images is None:
+            prompt_image_embeds = gen_vision_tower(gen_images)  # prompt_image_embeds = gen_vision_tower(gen_images).last_hidden_state 
+            ## pooling 
             prompt_image_embeds = self.pool_img(prompt_image_embeds)
-        target_image_embeds = torch.clone(prompt_image_embeds).detach()
-        latent_queries = self.get_model().latent_queries.repeat(input_ids.shape[0], 1, 1)
-        H = latent_queries.shape[-1]
-        latent_queries = latent_queries.contiguous().view(-1, H)
+            target_image_embeds = torch.clone(prompt_image_embeds).detach()
+            latent_queries = self.get_model().latent_queries.repeat(gen_images.shape[0], 1, 1)
+            H = latent_queries.shape[-1]
+            latent_queries = latent_queries.contiguous().view(-1, H)
+        else:
+            target_image_embeds = None
     
 
 
-
-        # if not gen_images is None:
-        #     prompt_image_embeds = gen_vision_tower(gen_images) # TODO: check dimension
-        #     if 'early' in self.get_gen_pooling():
-        #         prompt_image_embeds = self.pool_img(prompt_image_embeds)
-        #     # num_img, _, c = prompt_image_embeds.shape  # [batch, 729, 1152]
-        #     # prompt_image_embeds = prompt_image_embeds.contiguous().view(-1, c)
-        #     target_image_embeds = torch.clone(prompt_image_embeds).detach()
-        #     # prompt_image_embeds = gen_projector(prompt_image_embeds)
-        #     latent_queries = self.get_model().latent_queries.repeat(input_ids.shape[0], 1, 1)
-        #     H = latent_queries.shape[-1]
-        #     latent_queries = latent_queries.contiguous().view(-1, H)
-        # else:
-        #     target_image_embeds = None
-        #     num_img = und_images.shape[0]
-        #     dummy = torch.zeros(num_img, 3, 448, 448 , dtype=und_images.dtype, device=und_images.device) # TODO
-        #     temp = gen_vision_tower(dummy)[:,:729,:]
-        #     num_img, _, c = temp.shape
-        #     temp = temp.contiguous().view(-1, c) * 1e-20
-        #     # temp = gen_projector(temp) * 1e-9
-        #     latent_queries = self.get_model().latent_queries.repeat(input_ids.shape[0], 1, 1)
-        #     H = latent_queries.shape[-1]
-        #     latent_queries = latent_queries.contiguous().view(-1, H)
-
-
         if not und_images is None:
-            und_image_embeds = vision_tower(und_images, grid_thw=grid_thw)
-            # _, c = und_image_embeds.shape
-            # batch_size = und_images.shape[0]
-            # und_image_embeds = und_image_embeds.view(batch_size, -1, c)
-            # und_image_embeds = und_image_embeds.contiguous().view(-1, c)
-            # und_image_embeds = mm_projector(und_image_embeds)
-
-        # else:
-        #     num_img = input_ids.shape[0]
-        #     dummy = torch.zeros(num_img, 3, 384, 384 , dtype=gen_images.dtype, device=gen_images.device)  # clip (3, 336, 336) 
-        #     temp = vision_tower(dummy)
-        #     if 'early' in self.get_gen_pooling():
-        #         temp = temp[:,:64,:]
-        #     num_img, _, c = temp.shape
-        #     temp = temp.contiguous().view(-1, c)
-        #     temp = mm_projector(temp) * 1e-20
-        #     latent_queries += temp
+            
+            und_image_embeds = vision_tower(und_images).last_hidden_state
+            num_img, _, c = und_image_embeds.shape
+            und_image_embeds = und_image_embeds.contiguous().view(-1, c)
+            und_image_embeds = mm_projector(und_image_embeds)
 
 
-
-
-        
         image_idx = (input_ids == IMAGE_TOKEN_IDX)
         und_image_idx = (input_ids == UND_IMAGE_TOKEN_IDX)
-        # img_indicator = torch.clone(image_idx)
         output_indicator = labels != -100
         input_indicator = labels == -100
-        # img_loss_indicator = torch.logical_and(output_indicator, image_idx)
-        # img_loss_indicator = torch.cat(
-        #     [img_loss_indicator[:, 1:], img_loss_indicator[:, :1]], dim=1)
-        
-        # img_indicator = torch.cat(
-        #     [img_indicator[:, 1:], img_indicator[:, :1]], dim=1)
-        
-        # if not target_image_embeds is None:
-        #     target_image_embeds = target_image_embeds[-img_loss_indicator.sum():,:]
+
+
         text_embeds = self.get_model().embed_tokens(input_ids)
-        # N_QUERY = self.get_n_query()
-        gen_img_idx = torch.logical_and(output_indicator, image_idx)
-       
-        # if not target_image_embeds is None:
         text_embeds = text_embeds.clone() 
-        text_embeds[gen_img_idx] = latent_queries
-        # text_embeds[gen_img_idx] = prompt_image_embeds.to(text_embeds.device)[:gen_img_idx.sum(),:]
-        # target_image_embeds = target_image_embeds.to(text_embeds.device)[:gen_img_idx.sum(),:]
+        gen_img_idx = torch.logical_and(output_indicator, image_idx)
+        if not gen_images is None:
+            text_embeds[gen_img_idx] = latent_queries
+
 
         und_img_idx = torch.logical_and(input_indicator, und_image_idx)
-     
-
         if not und_images is None:
             text_embeds[und_img_idx] = und_image_embeds.to(text_embeds.device)[:und_img_idx.sum(), :]
 

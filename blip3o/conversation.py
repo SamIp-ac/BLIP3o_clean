@@ -461,17 +461,14 @@ conv_templates = {
     "mistral_instruct": conv_mistral_instruct,
     "chatml_direct": conv_chatml_direct,
     "mistral_direct": conv_chatml_direct,
-
     "plain": conv_blip3o_plain,
     "v0_plain": conv_blip3o_plain,
     "blip3o_v0": conv_blip3o_v0,
     "v0_mmtag": conv_blip3o_v0_mmtag,
     "blip3o_v1": conv_blip3o_v1,
     "v1_mmtag": conv_blip3o_v1_mmtag,
-    "blip3o_llama_2": conv_blip3o_llama_2,
     "llama3": conv_llama3,
     "qwen": conv_qwen, 
-
     "mpt": conv_mpt,
 }
 
