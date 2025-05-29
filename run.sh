@@ -27,7 +27,7 @@ torchrun --nproc_per_node=8 \
     --mm_use_im_patch_token False \
     --bf16 True \
     --output_dir ${OUTPUT_FOLDER} \
-    --num_train_epochs 1 \
+    --num_train_epochs 10 \
     --per_device_train_batch_size 16 \
     --per_device_eval_batch_size 4 \
     --gradient_accumulation_steps 1 \
