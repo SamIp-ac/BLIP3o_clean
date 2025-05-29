@@ -27,3 +27,5 @@ Specific data type markers in the script:
 ### Freezing the Backbone  
 - Add `--freeze_backbone True` in the training script to freeze Qwen3 during training  
 - Add `--freeze_backbone False` in the training script  to unfreeze Qwen3 during training  (we recommend unfreeze backbone when you train image understanding tasks)
+
+### Adjust your batch size according to your GPU setup!
