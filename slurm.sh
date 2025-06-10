@@ -13,7 +13,7 @@ export IMG_FOLDER=/Your/Image/Folder
 
 srun torchrun --nnodes=$SLURM_NNODES --nproc_per_node=8 \
     --rdzv_id=$SLURM_JOB_ID --rdzv_backend=c10d --rdzv_endpoint=$HOSTNAME:29501 blip3o/train/train_mem.py \
-    --deepspeed ./scripts/zero1.json \
+    --deepspeed ./deepspeed_scripts/zero1.json \
     --model_name_or_path Qwen/Qwen3-1.7B  \
     --version qwen \
     --data_type "mix" \
