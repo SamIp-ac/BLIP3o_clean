@@ -41,7 +41,7 @@ srun torchrun --nnodes=$SLURM_NNODES --nproc_per_node=8 \
     --warmup_ratio 0.003 \
     --lr_scheduler_type "cosine_with_min_lr" \
     --lr_scheduler_kwargs '{"min_lr":1e-5}' \
-    --model_max_length 512 \
+    --model_max_length 2048 \
     --logging_steps 1 \
     --tf32 True \
     --gradient_checkpointing True \
@@ -49,6 +49,6 @@ srun torchrun --nnodes=$SLURM_NNODES --nproc_per_node=8 \
     --lazy_preprocess True \
     --gen_pooling early_pool2d_4 \
     --n_query 64 \
-    --n_und_query 0 \
+    --n_und_query 1024 \
     --report_to wandb \
     --run_name blip3o_qwen3
