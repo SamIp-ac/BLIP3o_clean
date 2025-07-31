@@ -66,13 +66,13 @@ def temporalbench_caption_aggregate_results(results):
 
     model_name = "all-MiniLM-L6-v2"
     model = SentenceTransformer(model_name)
-    model = model.to("cuda:0")
+    model = model.to("mps:0")
 
     # Combine ref and gt lists into a big batch for encoding
     combined_sentences = ref_list + gt_list
 
-    # Encode the batch with CUDA
-    embeddings = model.encode(combined_sentences, convert_to_tensor=True, device="cuda")
+    # Encode the batch with mps
+    embeddings = model.encode(combined_sentences, convert_to_tensor=True, device="mps")
 
     # Split embeddings into ref and gt parts
     ref_embeddings = embeddings[: len(ref_list)]

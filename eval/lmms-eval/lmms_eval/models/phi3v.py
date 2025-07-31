@@ -32,7 +32,7 @@ class Phi3v(lmms):
     def __init__(
         self,
         model_id_name: str = "microsoft/Phi-3-vision-128k-instruct",
-        device: str = "cuda",
+        device: str = "mps",
         dtype: Optional[Union[str, torch.dtype]] = "auto",
         batch_size: int = 1,
         trust_remote_code: Optional[bool] = True,
@@ -45,7 +45,7 @@ class Phi3v(lmms):
         # Setup accelerator.
         accelerator = Accelerator()
         if accelerator.num_processes > 1:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
         else:
             self._device = device
         # Load model.

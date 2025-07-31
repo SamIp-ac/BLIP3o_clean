@@ -22,8 +22,8 @@ warnings.filterwarnings("ignore")
 # Configure logging
 eval_logger = logging.getLogger("lmms-eval")
 
-# Enable TF32 for CUDA
-torch.backends.cuda.matmul.allow_tf32 = True
+# Enable TF32 for mps
+torch.backends.mps.matmul.allow_tf32 = True
 
 
 # Determine best attention implementation
@@ -42,9 +42,9 @@ class VideoChat_Flash(lmms):
     def __init__(
         self,
         pretrained: str = "OpenGVLab/VideoChat-Flash-Qwen2-7B_res448",
-        device: Optional[str] = "cuda:0",
+        device: Optional[str] = "mps:0",
         batch_size: Optional[Union[int, str]] = 1,
-        device_map: Optional[str] = "cuda:0",
+        device_map: Optional[str] = "mps:0",
         use_cache: Optional[bool] = True,
         max_num_frames: Optional[int] = 32,
         **kwargs,
@@ -54,23 +54,23 @@ class VideoChat_Flash(lmms):
 
         assert kwargs == {}, f"Unexpected kwargs: {kwargs}"
 
-        assert torch.cuda.device_count() > 0, torch.cuda.device_count()
+        assert torch.mps.device_count() > 0, torch.mps.device_count()
         accelerator_kwargs = InitProcessGroupKwargs(timeout=timedelta(weeks=52))
         accelerator = Accelerator(kwargs_handlers=[accelerator_kwargs])
         if accelerator.num_processes > 1:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
         elif accelerator.num_processes == 1 and device_map == "auto":
             self._device = torch.device(device)
             self.device_map = device_map
         else:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
 
         self.max_num_frames = max_num_frames
 
         self._tokenizer = AutoTokenizer.from_pretrained(pretrained, trust_remote_code=True)
-        self._model = AutoModel.from_pretrained(pretrained, trust_remote_code=True).half().cuda()
+        self._model = AutoModel.from_pretrained(pretrained, trust_remote_code=True).half().mps()
 
         # modify here to use video-level compress
         self.model.config.mm_llm_compress = False

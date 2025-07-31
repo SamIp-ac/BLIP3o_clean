@@ -39,8 +39,8 @@ class VideoChatGPT(lmms):
         batch_size: Optional[Union[int, str]] = 1,
         projection_path: str = "MBZUAI/Video-ChatGPT-7B",
         model_path: str = "mmaaz60/LLaVA-7B-Lightening-v1-1",
-        device_map="cuda:0",
-        device: Optional[str] = "cuda:0",
+        device_map="mps:0",
+        device: Optional[str] = "mps:0",
         num_frm: Optional[Union[int, str]] = 100,
     ) -> None:
         super().__init__()
@@ -49,14 +49,14 @@ class VideoChatGPT(lmms):
         accelerator_kwargs = InitProcessGroupKwargs(timeout=timedelta(weeks=52))
         accelerator = Accelerator(kwargs_handlers=[accelerator_kwargs])
         if accelerator.num_processes > 1:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
         elif accelerator.num_processes == 1 and device_map == "auto":
             self._device = torch.device(device)
             self.device_map = device_map
         else:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
         try:
             self.model, self.vision_tower, self.tokenizer, self.image_processor, self.video_token_len = initialize_model(model_path, projection_path, device=self.device)
         except:
@@ -161,7 +161,7 @@ class VideoChatGPT(lmms):
             with torch.no_grad():
                 image_forward_outs = self.vision_tower(image_tensor, output_hidden_states=True)
                 frame_features = image_forward_outs.hidden_states[-2][:, 1:]  # Use second to last layer as in LLaVA
-            video_spatio_temporal_features = get_spatio_temporal_features_torch(frame_features).cuda()
+            video_spatio_temporal_features = get_spatio_temporal_features_torch(frame_features).mps()
 
             outputs, input_ids, context_ids = video_chatgpt_infer_ppl(
                 # video_frames,

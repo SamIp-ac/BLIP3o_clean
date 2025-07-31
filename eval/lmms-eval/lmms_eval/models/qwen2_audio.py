@@ -26,8 +26,8 @@ class Qwen2_Audio(lmms):
     def __init__(
         self,
         pretrained: str = "Qwen/Qwen2-Audio-7B-Instruct",  # Qwen/Qwen2-Audio-7B-Instruct
-        device: Optional[str] = "cuda",
-        device_map: Optional[str] = "cuda",
+        device: Optional[str] = "mps",
+        device_map: Optional[str] = "mps",
         batch_size: Optional[Union[int, str]] = 1,
         use_cache=True,
         add_generation_prompt: bool = True,
@@ -46,14 +46,14 @@ class Qwen2_Audio(lmms):
         # and then prompt to align with original Qwen2 Audio
         self.simple_prompt = simple_prompt
         if accelerator.num_processes > 1:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
         elif accelerator.num_processes == 1 and device_map == "auto":
             self._device = torch.device(device)
             self.device_map = device_map
         else:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
 
         self._model = Qwen2AudioForConditionalGeneration.from_pretrained(
             pretrained,
@@ -239,7 +239,7 @@ class Qwen2_Audio(lmms):
             inputs = self.processor(text=text, audios=audios, return_tensors="pt", padding=True, sampling_rate=self.processor.feature_extractor.sampling_rate)
 
             if self.device_map == "auto":
-                inputs = inputs.to("cuda")
+                inputs = inputs.to("mps")
             else:
                 inputs = inputs.to(self.device)
 

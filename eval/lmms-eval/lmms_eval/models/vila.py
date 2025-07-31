@@ -52,12 +52,12 @@ class VILA(lmms):
         pretrained: str = "Efficient-Large-Model/VILA1.5-40b",
         max_frames_num: Optional[int] = 100,
         truncation: Optional[bool] = True,
-        device: Optional[str] = "cuda:0",
+        device: Optional[str] = "mps:0",
         batch_size: Optional[Union[int, str]] = 1,
         attn_implementation=(
             "sdpa" if torch.__version__ >= "2.1.2" else "eager"
         ),  # inference implementation for attention, can be "sdpa", "eager", "flash_attention_2". Seems FA2 is not effective during inference: https://discuss.huggingface.co/t/flash-attention-has-no-effect-on-inference/73453/5
-        device_map="cuda:0",
+        device_map="mps:0",
         conv_template="hermes-2",
         use_cache=True,
         truncate_context=False,  # whether to truncate the context in generation, set it False for LLaVA-1.6
@@ -70,14 +70,14 @@ class VILA(lmms):
         accelerator_kwargs = InitProcessGroupKwargs(timeout=timedelta(weeks=52))
         accelerator = Accelerator(kwargs_handlers=[accelerator_kwargs])
         if accelerator.num_processes > 1:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
         elif accelerator.num_processes == 1 and device_map == "auto":
             self._device = torch.device(device)
             self.device_map = device_map
         else:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
 
         self.pretrained = pretrained
         self.model_name = get_model_name_from_path(pretrained)
@@ -224,7 +224,7 @@ class VILA(lmms):
             videos = []
             for visual in visuals:
                 video = self.load_video(visual, self.max_frames_num)
-                video = self._image_processor.preprocess(video, return_tensors="pt")["pixel_values"].half().cuda()
+                video = self._image_processor.preprocess(video, return_tensors="pt")["pixel_values"].half().mps()
                 videos.append(video)
 
             qs = contexts
@@ -245,8 +245,8 @@ class VILA(lmms):
             conv.append_message(conv.roles[1], continuation)
             prompt = conv.get_prompt()
 
-            input_ids = tokenizer_image_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).cuda()
-            attention_masks = input_ids.ne(self.tokenizer.pad_token_id).long().cuda()
+            input_ids = tokenizer_image_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).mps()
+            attention_masks = input_ids.ne(self.tokenizer.pad_token_id).long().mps()
 
             labels = input_ids.clone()
             # Context part no need to calculate for loss
@@ -287,7 +287,7 @@ class VILA(lmms):
             videos = []
             if self.max_frames_num == 0:
                 images = [Image.new("RGB", (448, 448), (0, 0, 0))] * num_video_frames
-                video = process_images(images, self.model.image_processor, self.model.config).half().cuda()
+                video = process_images(images, self.model.image_processor, self.model.config).half().mps()
                 videos.append(video)
             else:
                 for visual in visuals:
@@ -295,7 +295,7 @@ class VILA(lmms):
                         images = self.load_video(visual, num_video_frames)
                     elif self.video_decode_backend == "pyav":
                         images = read_video_pyav(visual, num_frm=num_video_frames)
-                    video = process_images(images, self.model.image_processor, self.model.config).half().cuda()
+                    video = process_images(images, self.model.image_processor, self.model.config).half().mps()
                     videos.append(video)
 
             qs = f"<video>\n {contexts}"
@@ -315,11 +315,11 @@ class VILA(lmms):
             conv.append_message(conv.roles[1], None)
             prompt = conv.get_prompt()
 
-            input_ids = tokenizer_image_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).cuda()
+            input_ids = tokenizer_image_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).mps()
             pad_token_ids = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id
             # if "llama_3" in self.conv_template:
             #     pad_token_ids = 0  # lmms-lab/llama3-llava-8b is trained on this pad token id. You may need to customize this for other models.
-            attention_masks = input_ids.ne(pad_token_ids).long().cuda()
+            attention_masks = input_ids.ne(pad_token_ids).long().mps()
 
             # input_ids_list = [tokenizer_image_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt") for prompt in question_input]
             # pad_token_ids = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id

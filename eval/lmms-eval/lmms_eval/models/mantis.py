@@ -1,6 +1,6 @@
 import torch
 
-torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.mps.matmul.allow_tf32 = True
 
 
 import copy
@@ -61,11 +61,11 @@ class Mantis(lmms):
         self,
         pretrained: str = "TIGER-Lab/Mantis-8B-siglip-llama3",
         truncation: Optional[bool] = True,
-        device: Optional[str] = "cuda:0",
+        device: Optional[str] = "mps:0",
         dtype: Optional[Union[str, torch.dtype]] = "float16",
         batch_size: Optional[Union[int, str]] = 1,
         attn_implementation=best_fit_attn_implementation,
-        device_map="cuda:0",
+        device_map="mps:0",
         use_cache=True,
         truncate_context=False,  # whether to truncate the context in generation, set it False for LLaVA-1.6
         **kwargs,
@@ -77,14 +77,14 @@ class Mantis(lmms):
         accelerator_kwargs = InitProcessGroupKwargs(timeout=timedelta(weeks=52))
         accelerator = Accelerator(kwargs_handlers=[accelerator_kwargs])
         if accelerator.num_processes > 1:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
         elif accelerator.num_processes == 1 and device_map == "auto":
             self._device = torch.device(device)
             self.device_map = device_map
         else:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
 
         self._is_idefics = "idefics" in pretrained.lower()
         if isinstance(dtype, str) and dtype != "auto":

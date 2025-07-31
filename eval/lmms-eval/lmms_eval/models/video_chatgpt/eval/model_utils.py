@@ -80,7 +80,7 @@ def get_seq_frames(total_num_frames, desired_num_frames):
     return seq
 
 
-def initialize_model(model_name, projection_path=None, device="cuda"):
+def initialize_model(model_name, projection_path=None, device="mps"):
     """
     Initializes the model with given parameters.
 

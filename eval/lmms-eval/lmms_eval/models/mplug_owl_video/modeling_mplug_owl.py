@@ -1361,7 +1361,7 @@ class MplugOwlForConditionalGeneration(MplugOwlPreTrainedModel):
         """
         hf_device_map = self.hf_device_map
 
-        if len(hf_device_map) > 1 and "language_model" not in hf_device_map and torch.cuda.device_count() > 1:
+        if len(hf_device_map) > 1 and "language_model" not in hf_device_map and torch.mps.device_count() > 1:
             # warn users about unexpected behavior when using multi-GPU + mPLUG-Owl + `accelerate`.
             logger.warning(
                 "The `language_model` is not in the `hf_device_map` dictionary and you are running your script"
@@ -1407,7 +1407,7 @@ class MplugOwlForConditionalGeneration(MplugOwlPreTrainedModel):
         >>> from transformers import MplugOwlProcessor, MplugOwlForConditionalGeneration
         >>> import torch
 
-        >>> device = "cuda" if torch.cuda.is_available() else "cpu"
+        >>> device = "mps" if torch.mps.is_available() else "cpu"
 
         >>> processor = MplugOwlProcessor.from_pretrained("x-plug/x_plug-llama-7b")
         >>> model = MplugOwlForConditionalGeneration.from_pretrained(
@@ -1434,7 +1434,7 @@ class MplugOwlForConditionalGeneration(MplugOwlPreTrainedModel):
         >>> from transformers import MplugOwlProcessor, MplugOwlForConditionalGeneration
         >>> import torch
 
-        >>> device = "cuda" if torch.cuda.is_available() else "cpu"
+        >>> device = "mps" if torch.mps.is_available() else "cpu"
 
         >>> processor = MplugOwlProcessor.from_pretrained("x-plug/x_plug-llama-7b")
         >>> model = MplugOwlForConditionalGeneration.from_pretrained(

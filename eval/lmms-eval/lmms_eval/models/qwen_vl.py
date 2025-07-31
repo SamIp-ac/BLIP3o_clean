@@ -30,7 +30,7 @@ class Qwen_VL(lmms):
     def __init__(
         self,
         pretrained: str = "Qwen/Qwen-VL",
-        device: Optional[str] = "cuda",
+        device: Optional[str] = "mps",
         batch_size: Optional[Union[int, str]] = 1,
         trust_remote_code: Optional[bool] = True,
         use_cache=True,
@@ -42,7 +42,7 @@ class Qwen_VL(lmms):
 
         accelerator = Accelerator()
         if accelerator.num_processes > 1:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
         else:
             self._device = device
         self._model = AutoModelForCausalLM.from_pretrained(pretrained, device_map=self._device, trust_remote_code=trust_remote_code).eval()

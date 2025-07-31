@@ -15,7 +15,7 @@ seed = 0
 random.seed(seed)
 np.random.seed(seed)
 torch.manual_seed(seed)
-torch.cuda.manual_seed_all(seed)
+torch.mps.manual_seed_all(seed)
 
 
 def img_process(images, processor, image_aspect_ratio):
@@ -46,7 +46,7 @@ device_1 = 0
 
 
 
-model = ReconstructionPipeline.from_pretrained(decoder_path).to(device="cuda:1").to(dtype=torch.float32)
+model = ReconstructionPipeline.from_pretrained(decoder_path).to(device="mps:1").to(dtype=torch.float32)
 gen_image_processor = SiglipImageProcessor.from_pretrained("google/siglip2-so400m-patch16-512")
 
 
@@ -57,7 +57,7 @@ x_source = img_process(
     images,
     gen_image_processor,
     "square",
-).squeeze(0).to(device="cuda:1")
+).squeeze(0).to(device="mps:1")
 
 x_source = [x_source]
 samples = model.sample_images_autoencoder(x_source=x_source)

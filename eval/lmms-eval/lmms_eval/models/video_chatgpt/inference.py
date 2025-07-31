@@ -85,7 +85,7 @@ def video_chatgpt_infer(video_frames, question, conv_mode, model, vision_tower, 
     image_tensor = image_processor.preprocess(video_frames, return_tensors="pt")["pixel_values"]
 
     # Move image tensor to GPU and reduce precision to half
-    image_tensor = image_tensor.half().cuda()
+    image_tensor = image_tensor.half().mps()
 
     # Generate video spatio-temporal features
     with torch.no_grad():
@@ -94,7 +94,7 @@ def video_chatgpt_infer(video_frames, question, conv_mode, model, vision_tower, 
     video_spatio_temporal_features = get_spatio_temporal_features_torch(frame_features)
 
     # Move inputs to GPU
-    input_ids = torch.as_tensor(inputs.input_ids).cuda()
+    input_ids = torch.as_tensor(inputs.input_ids).mps()
 
     # Define stopping criteria for generation
     stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
@@ -163,20 +163,20 @@ def video_chatgpt_infer_ppl(question, continuation, conv_mode, model, vision_tow
     image_tensor = image_processor.preprocess(video_frames, return_tensors='pt')['pixel_values']
 
     # Move image tensor to GPU and reduce precision to half
-    # image_tensor = image_tensor.half().cuda()
+    # image_tensor = image_tensor.half().mps()
 
     # Generate video spatio-temporal features
     with torch.no_grad():
         image_forward_outs = vision_tower(image_tensor, output_hidden_states=True)
         frame_features = image_forward_outs.hidden_states[-2][:, 1:] # Use second to last layer as in LLaVA
-    video_spatio_temporal_features = get_spatio_temporal_features_torch(frame_features).cuda()
+    video_spatio_temporal_features = get_spatio_temporal_features_torch(frame_features).mps()
     
     del image_tensor
-    torch.cuda.empty_cache()"""
+    torch.mps.empty_cache()"""
     # Move inputs to GPU
-    input_ids = torch.as_tensor(inputs.input_ids).cuda()
-    attention_mask = torch.as_tensor(inputs.attention_mask).cuda()
-    labels = torch.as_tensor(inputs["input_ids"]).clone().cuda()
+    input_ids = torch.as_tensor(inputs.input_ids).mps()
+    attention_mask = torch.as_tensor(inputs.attention_mask).mps()
+    labels = torch.as_tensor(inputs["input_ids"]).clone().mps()
     labels[0, : len(context_ids)] = -100
 
     # Define stopping criteria for generation

@@ -29,8 +29,8 @@ warnings.filterwarnings("ignore")
 # Configure logging
 eval_logger = logging.getLogger("lmms-eval")
 
-# Enable TF32 for CUDA
-torch.backends.cuda.matmul.allow_tf32 = True
+# Enable TF32 for mps
+torch.backends.mps.matmul.allow_tf32 = True
 
 # Import LLaVA modules
 try:
@@ -79,11 +79,11 @@ class EgoGPT(lmms):
         self,
         pretrained: str = "checkpoints/egogpt_IT_12k_1126_zero3",
         truncation: Optional[bool] = True,
-        device: Optional[str] = "cuda:0",
+        device: Optional[str] = "mps:0",
         batch_size: Optional[Union[int, str]] = 1,
         model_name: Optional[str] = None,
         attn_implementation: Optional[str] = best_fit_attn_implementation,
-        device_map: Optional[str] = "cuda:0",
+        device_map: Optional[str] = "mps:0",
         conv_template: Optional[str] = "qwen_1_5",
         use_cache: Optional[bool] = True,
         truncate_context: Optional[bool] = False,  # whether to truncate the context in generation, set it False for LLaVA-1.6
@@ -102,14 +102,14 @@ class EgoGPT(lmms):
         accelerator_kwargs = InitProcessGroupKwargs(timeout=timedelta(weeks=52))
         accelerator = Accelerator(kwargs_handlers=[accelerator_kwargs])
         if accelerator.num_processes > 1:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
         elif accelerator.num_processes == 1 and device_map == "auto":
             self._device = torch.device(device)
             self.device_map = device_map
         else:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
 
         egogpt_model_args = {}
         if attn_implementation is not None:
@@ -372,7 +372,7 @@ class EgoGPT(lmms):
                                 frames, speech, speech_lengths = self.load_video(video_path=visual[0], max_frames_num=self.max_frames_num, task_name=task_name)
                             else:
                                 raise NotImplementedError("Only decord backend is supported for video task")
-                            processed_frames = self._image_processor.preprocess(frames, return_tensors="pt")["pixel_values"].half().cuda()
+                            processed_frames = self._image_processor.preprocess(frames, return_tensors="pt")["pixel_values"].half().mps()
                             processed_frames = processed_frames.half()
                             image_tensor.append(processed_frames)
                             image_sizes = [frames[0].size]

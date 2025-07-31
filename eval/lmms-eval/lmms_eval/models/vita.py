@@ -52,12 +52,12 @@ class VITA(lmms):
         self,
         pretrained: str = "VITA-MLLM/VITA-1.5",
         truncation: Optional[bool] = True,
-        device: Optional[str] = "cuda:0",
+        device: Optional[str] = "mps:0",
         batch_size: Optional[Union[int, str]] = 1,
         model_base=None,
         model_type="qwen2p5_instruct",
         frameCat=False,
-        device_map="cuda:0",
+        device_map="mps:0",
         conv_template="qwen2p5_instruct",
         use_cache=True,
         max_frames: int = 32,
@@ -72,14 +72,14 @@ class VITA(lmms):
         accelerator = Accelerator(kwargs_handlers=[accelerator_kwargs])
         self.accelerator = accelerator
         if accelerator.num_processes > 1:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
         elif accelerator.num_processes == 1 and device_map == "auto":
             self._device = torch.device(device)
             self.device_map = device_map
         else:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
 
         model_path = os.path.expanduser(pretrained)
         model_name = get_model_name_from_path(model_path)
@@ -266,7 +266,7 @@ class VITA(lmms):
                         video_framerate=1,
                         image_aspect_ratio=getattr(self._model.config, "image_aspect_ratio", None),
                     )
-                    image_tensor = video_frames.half().cuda()
+                    image_tensor = video_frames.half().mps()
                     # Right now in lmms eval, hasn't got input along with audio, so I keep a dummy case here
                     prompts_input = DEFAULT_IMAGE_TOKEN * slice_len + "\n" + prompts_input
                     modality = "video"
@@ -277,7 +277,7 @@ class VITA(lmms):
                     else:
                         image, p_num = self.dynamic_preprocess(image, min_num=1, max_num=12, image_size=448, use_thumbnail=True)
                     assert len(p_num) == 1
-                    image_tensor = self.model.process_images(image, self.model.config).to(dtype=self.model.dtype, device="cuda")
+                    image_tensor = self.model.process_images(image, self.model.config).to(dtype=self.model.dtype, device="mps")
                     # Same situation with video
                     prompts_input = DEFAULT_IMAGE_TOKEN * p_num[0] + "\n" + prompts_input
                     modality = "image"
@@ -290,10 +290,10 @@ class VITA(lmms):
                     audio_length = torch.unsqueeze(torch.tensor(audio_length), dim=0)
                     audio_for_llm_lens = torch.unsqueeze(torch.tensor(audio_for_llm_lens), dim=0)
                     audios = dict()
-                    audios["audios"] = audio.half().cuda()
-                    audios["lengths"] = audio_length.half().cuda()
-                    audios["lengths_for_llm"] = audio_for_llm_lens.cuda()
-                    image_tensor = torch.zeros((1, 3, 448, 448)).to(dtype=self.model.dtype, device="cuda")
+                    audios["audios"] = audio.half().mps()
+                    audios["lengths"] = audio_length.half().mps()
+                    audios["lengths_for_llm"] = audio_for_llm_lens.mps()
+                    image_tensor = torch.zeros((1, 3, 448, 448)).to(dtype=self.model.dtype, device="mps")
                     prompts_input = prompts_input + DEFAULT_AUDIO_TOKEN
                     modality = "lang"
                     os.remove(temp_file_name)
@@ -304,9 +304,9 @@ class VITA(lmms):
             prompt = conv.get_prompt(modality)
 
             if audios:
-                input_ids = tokenizer_image_audio_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).cuda()
+                input_ids = tokenizer_image_audio_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).mps()
             else:
-                input_ids = tokenizer_image_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).cuda()
+                input_ids = tokenizer_image_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).mps()
             stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
             keywords = [stop_str]
             stopping_criteria = KeywordsStoppingCriteria(keywords, self.tokenizer, input_ids)
@@ -319,9 +319,9 @@ class VITA(lmms):
                 audio_length = torch.unsqueeze(torch.tensor(audio_length), dim=0)
                 audio_for_llm_lens = torch.unsqueeze(torch.tensor(audio_for_llm_lens), dim=0)
                 audios = dict()
-                audios["audios"] = audio.half().cuda()
-                audios["lengths"] = audio_length.half().cuda()
-                audios["lengths_for_llm"] = audio_for_llm_lens.cuda()
+                audios["audios"] = audio.half().mps()
+                audios["lengths"] = audio_length.half().mps()
+                audios["lengths_for_llm"] = audio_for_llm_lens.mps()
 
             if "max_new_tokens" not in gen_kwargs:
                 gen_kwargs["max_new_tokens"] = 1024

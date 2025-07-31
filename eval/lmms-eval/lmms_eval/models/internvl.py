@@ -121,12 +121,12 @@ class InternVLChat(lmms):
         config=None,
         pretrained: str = "OpenGVLab/InternVL-Chat-V1-5",
         truncation: Optional[bool] = True,
-        device: Optional[str] = "cuda:0",
+        device: Optional[str] = "mps:0",
         dtype: Optional[Union[str, torch.dtype]] = "auto",
         batch_size: Optional[Union[int, str]] = 1,
         trust_remote_code: Optional[bool] = False,
         revision=None,
-        device_map="cuda:0",
+        device_map="mps:0",
         conv_template="vicuna_v1",
         use_cache=True,
         truncate_context=False,  # whether to truncate the context in generation, set it False for LLaVA-1.6
@@ -145,14 +145,14 @@ class InternVLChat(lmms):
         accelerator_kwargs = InitProcessGroupKwargs(timeout=timedelta(weeks=52))
         accelerator = Accelerator(kwargs_handlers=[accelerator_kwargs])
         if accelerator.num_processes > 1:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
         elif accelerator.num_processes == 1 and device_map == "auto":
             self._device = torch.device(device)
             self.device_map = device_map
         else:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
 
         self.dynamic = dynamic  # dynamic image_size
         self.max_num = max_num
@@ -166,7 +166,7 @@ class InternVLChat(lmms):
         tokenizer = AutoTokenizer.from_pretrained(cache_dir, trust_remote_code=True, use_fast=False)
         model = InternVLChatModel.from_pretrained(cache_dir, low_cpu_mem_usage=True, config=config, torch_dtype=torch.bfloat16, load_in_8bit=load_in_8bit).eval()
         if not load_in_8bit:
-            model = model.cuda()
+            model = model.mps()
         # self.model=model
         # self.device=self._device
         self._tokenizer = tokenizer
@@ -300,8 +300,8 @@ class InternVLChat(lmms):
         template.append_message(template.roles[1], None)
         query = template.get_prompt()
         model_inputs = tokenizer(query, return_tensors="pt")
-        input_ids = model_inputs["input_ids"].cuda()
-        attention_mask = model_inputs["attention_mask"].cuda()
+        input_ids = model_inputs["input_ids"].mps()
+        attention_mask = model_inputs["attention_mask"].mps()
         generation_config["eos_token_id"] = eos_token_id
 
         generation_output = self.generate(pixel_values=pixel_values, input_ids=input_ids, attention_mask=attention_mask, **generation_config)
@@ -456,7 +456,7 @@ class InternVLChat(lmms):
             batched_visuals = [doc_to_visual[0](self.task_dict[task][split][ids]) for ids in doc_id]  # [B, N]
             flattened_visuals = self.flatten(batched_visuals)
             try:
-                pixel_values = self.load_image(flattened_visuals, self.image_size).cuda().to(torch.bfloat16)
+                pixel_values = self.load_image(flattened_visuals, self.image_size).mps().to(torch.bfloat16)
             except IndexError:
                 pixel_values = None
             gen_kwargs = all_gen_kwargs[0]

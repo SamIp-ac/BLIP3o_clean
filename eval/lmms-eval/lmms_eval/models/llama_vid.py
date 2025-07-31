@@ -46,7 +46,7 @@ class LLaMAVid(lmms):
         self,
         pretrained: str = "YanweiLi/llama-vid-7b-full-224-video-fps-1",
         truncation: Optional[bool] = True,
-        device: Optional[str] = "cuda:0",
+        device: Optional[str] = "mps:0",
         dtype: Optional[Union[str, torch.dtype]] = "auto",
         batch_size: Optional[Union[int, str]] = 1,
         trust_remote_code: Optional[bool] = False,
@@ -54,7 +54,7 @@ class LLaMAVid(lmms):
         attn_implementation=(
             "sdpa" if torch.__version__ > "2.1.2" else "eager"
         ),  # inference implementation for attention, can be "sdpa", "eager", "flash_attention_2". Seems FA2 is not effective during inference: https://discuss.huggingface.co/t/flash-attention-has-no-effect-on-inference/73453/5
-        device_map="cuda:0",
+        device_map="mps:0",
         conv_template="vicuna_v1",
         use_cache=True,
         truncate_context=False,
@@ -66,14 +66,14 @@ class LLaMAVid(lmms):
         accelerator_kwargs = InitProcessGroupKwargs(timeout=timedelta(weeks=52))
         accelerator = Accelerator(kwargs_handlers=[accelerator_kwargs])
         if accelerator.num_processes > 1:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
         elif accelerator.num_processes == 1 and device_map == "auto":
             self._device = torch.device(device)
             self.device_map = device_map
         else:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
 
         self.pretrained = pretrained
         self.model_path = snapshot_download(self.pretrained)
@@ -220,7 +220,7 @@ class LLaMAVid(lmms):
             videos = []
             for visual in visuals:
                 video = read_video_pyav(visual, num_frm=self.num_frames)
-                video = self.image_processor.preprocess(video, return_tensors="pt")["pixel_values"].half().cuda()
+                video = self.image_processor.preprocess(video, return_tensors="pt")["pixel_values"].half().mps()
                 video = [video]
                 videos += video
             qs = contexts
@@ -234,7 +234,7 @@ class LLaMAVid(lmms):
             conv.append_message(conv.roles[1], None)
             prompt = conv.get_prompt()
 
-            input_ids = tokenizer_image_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).cuda()
+            input_ids = tokenizer_image_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).mps()
 
             stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
             keywords = [stop_str]

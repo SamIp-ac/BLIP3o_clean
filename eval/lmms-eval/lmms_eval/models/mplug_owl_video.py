@@ -27,10 +27,10 @@ class mplug_Owl(lmms):
     def __init__(
         self,
         pretrained: str = "MAGAer13/mplug-owl-llama-7b-video",
-        device: Optional[str] = "cuda:0",
+        device: Optional[str] = "mps:0",
         dtype: Optional[Union[str, torch.dtype]] = "auto",
         batch_size: Optional[Union[int, str]] = 1,
-        device_map="cuda:0",
+        device_map="mps:0",
         num_frames: Union[str, int] = 4,
         **kwargs,
     ) -> None:
@@ -47,14 +47,14 @@ class mplug_Owl(lmms):
         accelerator_kwargs = InitProcessGroupKwargs(timeout=timedelta(weeks=52))
         accelerator = Accelerator(kwargs_handlers=[accelerator_kwargs])
         if accelerator.num_processes > 1:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
         elif accelerator.num_processes == 1 and device_map == "auto":
             self._device = torch.device(device)
             self.device_map = device_map
         else:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
 
         # import pdb; pdb.set_trace()
         # This is very slow. Their issue, not mine

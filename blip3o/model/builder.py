@@ -9,10 +9,10 @@ from blip3o.constants import DEFAULT_IMAGE_PATCH_TOKEN, DEFAULT_IM_START_TOKEN, 
 from blip3o.train.train import smart_tokenizer_and_embedding_resize
 
 
-def load_pretrained_model(model_path, load_8bit=False, load_4bit=False, device_map="auto", device="cuda", use_flash_attn=False, **kwargs):
+def load_pretrained_model(model_path, load_8bit=False, load_4bit=False, device_map="auto", device="mps", use_flash_attn=False, **kwargs):
     kwargs = {"device_map": device_map, **kwargs}
 
-    if device != "cuda":
+    if device != "mps":
         kwargs['device_map'] = {"": device}
 
     if load_8bit:
@@ -34,7 +34,7 @@ def load_pretrained_model(model_path, load_8bit=False, load_4bit=False, device_m
 
     tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
 
-    model = blip3oQwenForInferenceLM.from_pretrained(model_path, low_cpu_mem_usage=True, torch_dtype=torch.float16).to('cuda:0')
+    model = blip3oQwenForInferenceLM.from_pretrained(model_path, low_cpu_mem_usage=True, torch_dtype=torch.float16).to('mps:0')
 
     image_processor = None
     mm_use_im_start_end = getattr(model.config, "mm_use_im_start_end", False)
@@ -58,10 +58,10 @@ def load_pretrained_model(model_path, load_8bit=False, load_4bit=False, device_m
 
 
 
-def load_pretrained_model_lmms_eval(model_path, load_8bit=False, load_4bit=False, device_map="auto", device="cuda", use_flash_attn=False, **kwargs):
+def load_pretrained_model_lmms_eval(model_path, load_8bit=False, load_4bit=False, device_map="auto", device="mps", use_flash_attn=False, **kwargs):
     kwargs = {"device_map": device_map, **kwargs}
 
-    if device != "cuda":
+    if device != "mps":
         kwargs['device_map'] = {"": device}
 
     if load_8bit:

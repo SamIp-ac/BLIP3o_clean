@@ -26,7 +26,7 @@ class MiniCPM_V(lmms):
     def __init__(
         self,
         pretrained: str = "openbmb/MiniCPM-V",
-        device: Optional[str] = "cuda",
+        device: Optional[str] = "mps",
         dtype: Optional[Union[str, torch.dtype]] = torch.bfloat16,
         batch_size: Optional[Union[int, str]] = 1,
         trust_remote_code: Optional[bool] = True,
@@ -38,7 +38,7 @@ class MiniCPM_V(lmms):
 
         accelerator = Accelerator()
         if accelerator.num_processes > 1:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
         else:
             self._device = device
         self._model = AutoModel.from_pretrained(pretrained, trust_remote_code=trust_remote_code, torch_dtype=dtype, device_map=self._device).to(dtype)

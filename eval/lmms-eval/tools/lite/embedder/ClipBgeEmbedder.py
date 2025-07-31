@@ -24,7 +24,7 @@ class ClipBgeEmbedder(BaseEmbedder):
         output_path: str,
         mm_pretrained: str = "openai/clip-vit-large-patch14",
         txt_pretrained: str = "BAAI/bge-m3",
-        device: str = "cuda",
+        device: str = "mps",
         device_map: str = "",
     ) -> None:
         super().__init__(name, output_path)
@@ -34,8 +34,8 @@ class ClipBgeEmbedder(BaseEmbedder):
         accelerator_kwargs = InitProcessGroupKwargs(timeout=timedelta(weeks=52))
         self.accelerator = Accelerator(kwargs_handlers=[accelerator_kwargs])
         if self.accelerator.num_processes > 1 and device_map == "":
-            self.device = torch.device(f"cuda:{self.accelerator.local_process_index}")
-            self.device_map = f"cuda:{self.accelerator.local_process_index}"
+            self.device = torch.device(f"mps:{self.accelerator.local_process_index}")
+            self.device_map = f"mps:{self.accelerator.local_process_index}"
         else:
             self.device = torch.device(device)
             self.device_map = device_map
@@ -82,10 +82,10 @@ class ClipBgeEmbedder(BaseEmbedder):
 
 
 if __name__ == "__main__":
-    model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14").to("cuda")
+    model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14").to("mps")
     processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
     text = ["a photo of a cat", "a photo of a dog"]
     inputs = processor(text=text, return_tensors="pt")
-    inputs = {k: v.to("cuda") for k, v in inputs.items()}
+    inputs = {k: v.to("mps") for k, v in inputs.items()}
     outputs = model.get_text_features(**inputs)
     print(outputs.mean(dim=0).shape)

@@ -196,8 +196,8 @@ class VideoChat2(lmms):
         self,
         pretrained: str = "OpenGVLab/VideoChat2_HD_stage4_Mistral_7B_hf",
         modality: str = "video",
-        device: str = "cuda:0",
-        device_map: str = "cuda:0",
+        device: str = "mps:0",
+        device_map: str = "mps:0",
         batch_size: str = "1",
         num_segments: str = "16",
         hd_num: str = "6",
@@ -217,7 +217,7 @@ class VideoChat2(lmms):
                 trust_remote_code=True,
             )
             .eval()
-            .cuda()
+            .mps()
         )
         self._tokenizer = self._model.mistral_tokenizer
         batch_size = int(batch_size)
@@ -229,14 +229,14 @@ class VideoChat2(lmms):
         accelerator = Accelerator(kwargs_handlers=[accelerator_kwargs])
         self.accelerator = accelerator
         if accelerator.num_processes > 1:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
         elif accelerator.num_processes == 1 and device_map == "auto":
             self._device = torch.device(device)
             self.device_map = device_map
         else:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
 
         if accelerator.num_processes > 1:
             assert accelerator.distributed_type in [DistributedType.FSDP, DistributedType.MULTI_GPU, DistributedType.DEEPSPEED], "Unsupported distributed type provided. Only DDP and FSDP are supported."
@@ -464,7 +464,7 @@ class VideoChat2(lmms):
                 new_pos_emb = self.get_sinusoid_encoding_table(n_position=(224 // 16) ** 2, cur_frame=1, ckpt_num_frame=1, pre_n_position=14 * 14)
                 self.model.vision_encoder.encoder.img_pos_embed = new_pos_emb
                 pixel_values = load_image(image_path, resolution=224, hd_num=self.hd_num)
-                pixel_values = pixel_values.cuda()
+                pixel_values = pixel_values.mps()
                 question = self.instruction + contexts
                 with torch.no_grad():
                     img_list = []
@@ -485,7 +485,7 @@ class VideoChat2(lmms):
                 new_pos_emb = self.get_sinusoid_encoding_table(n_position=(224 // 16) ** 2 * self.num_segments, cur_frame=self.num_segments)
                 self.model.vision_encoder.encoder.pos_embed = new_pos_emb
                 pixel_values = load_video(video_path, num_segments=self.num_segments, return_msg=False, resolution=224, hd_num=self.hd_num)
-                pixel_values = pixel_values.cuda()
+                pixel_values = pixel_values.mps()
                 question = self.instruction + contexts
                 with torch.no_grad():
                     img_list = []

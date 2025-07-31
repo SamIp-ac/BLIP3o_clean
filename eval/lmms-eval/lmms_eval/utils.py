@@ -746,7 +746,7 @@ def pad_and_concat(
 
 def clear_torch_cache() -> None:
     gc.collect()
-    torch.cuda.empty_cache()
+    torch.mps.empty_cache()
 
 
 def get_dtype(dtype: Union[str, torch.dtype]) -> torch.dtype:

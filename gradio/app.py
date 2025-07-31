@@ -26,7 +26,7 @@ def set_global_seed(seed: int = 42):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    torch.mps.manual_seed_all(seed)
 
 def add_template(prompt_list: list[str]) -> str:
     conv = conv_templates['qwen'].copy()
@@ -69,7 +69,7 @@ def process_image(prompt: str, img: Image.Image) -> str:
         videos=video_inputs,
         padding=True,
         return_tensors="pt",
-    ).to('cuda:0')
+    ).to('mps:0')
     generated_ids = multi_model.generate(**inputs, max_new_tokens=1024)
     input_token_len = inputs.input_ids.shape[1]
     generated_ids_trimmed = generated_ids[:, input_token_len:]
@@ -94,8 +94,8 @@ pipe = DiffusionPipeline.from_pretrained(
     tokenizer=tokenizer,
     safety_checker=None
 )
-pipe.vae.to('cuda:0')
-pipe.unet.to('cuda:0')
+pipe.vae.to('mps:0')
+pipe.unet.to('mps:0')
 
 # Gradio UI
 with gr.Blocks(title="BLIP3-o") as demo:

@@ -33,8 +33,8 @@ warnings.filterwarnings("ignore")
 # Configure logging
 eval_logger = logging.getLogger("lmms-eval")
 
-# Enable TF32 for CUDA
-torch.backends.cuda.matmul.allow_tf32 = True
+# Enable TF32 for mps
+torch.backends.mps.matmul.allow_tf32 = True
 
 # Import LLaVA modules
 try:
@@ -75,11 +75,11 @@ class Llava_OneVision_MovieChat(lmms):
         self,
         pretrained: str = "lmms-lab/llava-onevision-qwen2-7b-ov",
         truncation: Optional[bool] = True,
-        device: Optional[str] = "cuda:0",
+        device: Optional[str] = "mps:0",
         batch_size: Optional[Union[int, str]] = 1,
         model_name: str = "llava_qwen",
         attn_implementation: Optional[str] = best_fit_attn_implementation,
-        device_map: Optional[str] = "cuda:0",
+        device_map: Optional[str] = "mps:0",
         conv_template: Optional[str] = "qwen_1_5",
         use_cache: Optional[bool] = True,
         truncate_context: Optional[bool] = False,  # whether to truncate the context in generation, set it False for LLaVA-1.6
@@ -102,14 +102,14 @@ class Llava_OneVision_MovieChat(lmms):
         accelerator_kwargs = InitProcessGroupKwargs(timeout=timedelta(weeks=52))
         accelerator = Accelerator(kwargs_handlers=[accelerator_kwargs])
         if accelerator.num_processes > 1:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
         elif accelerator.num_processes == 1 and device_map == "auto":
             self._device = torch.device(device)
             self.device_map = device_map
         else:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
 
         llava_model_args = {
             "multimodal": True,
@@ -388,7 +388,7 @@ class Llava_OneVision_MovieChat(lmms):
                             # uniformly sample self.sliding_window_length frames from the video from start_time to end_time
                             frames = list(video.subclip(start_time, end_time).iter_frames(fps=self.sliding_window_length / clip_duration))[: self.sliding_window_length]
                             frames = [Image.fromarray(frame).convert("RGB") for frame in frames]
-                            preprocess_frames = self._image_processor.preprocess(frames, return_tensors="pt")["pixel_values"].half().cuda()
+                            preprocess_frames = self._image_processor.preprocess(frames, return_tensors="pt")["pixel_values"].half().mps()
                             encoded_window = self.model.encode_images(preprocess_frames)  # [frames, 729,3584]
 
                             for frame in encoded_window:
@@ -412,7 +412,7 @@ class Llava_OneVision_MovieChat(lmms):
                                     max_value = max(similar_list)
                                     max_index = similar_list.index(max_value)
                                     new_frame_feature = (self.short_memory_buffer[max_index].cpu() + self.short_memory_buffer[max_index + 1].cpu()) / 2
-                                    self.short_memory_buffer[max_index] = new_frame_feature.cuda()
+                                    self.short_memory_buffer[max_index] = new_frame_feature.mps()
                                     del self.short_memory_buffer[max_index + 1]
                                     similar_list = []
                                     for frame_i in range(len(self.short_memory_buffer) - 1):

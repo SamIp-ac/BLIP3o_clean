@@ -24,7 +24,7 @@ class ReconstructionPipeline(Reconstruct):
         num_inference_steps: int = 30,
         num_images_per_prompt: int = 1,
         output_type: Optional[str] = "pil",
-        device: Optional[Union[str, torch.device]] = "cuda",
+        device: Optional[Union[str, torch.device]] = "mps",
         return_dict: bool = True,
         **kwargs,
     ) -> Union[ImagePipelineOutput, Tuple]:

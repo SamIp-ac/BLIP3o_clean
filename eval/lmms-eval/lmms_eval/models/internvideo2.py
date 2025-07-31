@@ -66,7 +66,7 @@ def load_image(image_path, resolution=224, hd_num=6):
     std = (0.229, 0.224, 0.225)
 
     transform = T.Compose([T.Lambda(lambda x: x.float().div(255.0)), T.Normalize(mean, std)])
-    image_tensor = transform(image_tensor).cuda()
+    image_tensor = transform(image_tensor).mps()
 
     sub_img = image_tensor.reshape(1, T_, 3, H // resolution, resolution, W // resolution, resolution).permute(0, 3, 5, 1, 2, 4, 6).reshape(-1, T_, 3, resolution, resolution).contiguous()
 
@@ -199,8 +199,8 @@ class InternVideo2(lmms):
         self,
         pretrained: str = "OpenGVLab/InternVideo2_chat_8B_HD",
         modality: str = "video",
-        device: str = "cuda:0",
-        device_map: str = "cuda:0",
+        device: str = "mps:0",
+        device_map: str = "mps:0",
         batch_size: str = "1",
         num_segments: str = "8",
         hd_num: str = "6",
@@ -211,7 +211,7 @@ class InternVideo2(lmms):
         self.instruction = "Carefully watch the video and pay attention to the cause and sequence of events, the detail and movement of objects, and the action and pose of persons.\n"
 
         self._tokenizer = AutoTokenizer.from_pretrained(self.path, trust_remote_code=True, use_fast=False)
-        self._model = AutoModel.from_pretrained(self.path, torch_dtype=torch.bfloat16, trust_remote_code=True).eval().cuda()
+        self._model = AutoModel.from_pretrained(self.path, torch_dtype=torch.bfloat16, trust_remote_code=True).eval().mps()
         batch_size = int(batch_size)
         self.num_segments = int(num_segments)
         self.hd_num = int(hd_num)
@@ -221,14 +221,14 @@ class InternVideo2(lmms):
         accelerator = Accelerator(kwargs_handlers=[accelerator_kwargs])
         self.accelerator = accelerator
         if accelerator.num_processes > 1:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
         elif accelerator.num_processes == 1 and device_map == "auto":
             self._device = torch.device(device)
             self.device_map = device_map
         else:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
 
         if accelerator.num_processes > 1:
             assert accelerator.distributed_type in [DistributedType.FSDP, DistributedType.MULTI_GPU, DistributedType.DEEPSPEED], "Unsupported distributed type provided. Only DDP and FSDP are supported."
@@ -328,7 +328,7 @@ class InternVideo2(lmms):
             if self.modality == "image":
                 image_path = visuals[0]
                 pixel_values = load_image(image_path, resolution=224, hd_num=self.hd_num)
-                pixel_values = pixel_values.to(torch.bfloat16).cuda()
+                pixel_values = pixel_values.to(torch.bfloat16).mps()
                 question = contexts
                 response, history = self.model.chat(self.tokenizer, msg="", user_prompt=question, media_type="image", media_tensor=pixel_values, instruction=None, chat_history=[], return_history=True, **gen_kwargs)
             elif self.modality == "video":
@@ -339,7 +339,7 @@ class InternVideo2(lmms):
                 else:
                     answer_prompt = None
                 pixel_values = load_video(video_path, num_segments=self.num_segments, return_msg=False, resolution=224, hd_num=self.hd_num)
-                pixel_values = pixel_values.to(torch.bfloat16).cuda()
+                pixel_values = pixel_values.to(torch.bfloat16).mps()
                 question = self.instruction + contexts
                 response, history = self.model.chat(
                     self.tokenizer,

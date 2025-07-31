@@ -41,8 +41,8 @@ warnings.filterwarnings("ignore")
 # Configure logging
 eval_logger = logging.getLogger("lmms-eval")
 
-# Enable TF32 for CUDA
-torch.backends.cuda.matmul.allow_tf32 = True
+# Enable TF32 for mps
+torch.backends.mps.matmul.allow_tf32 = True
 
 # Import LLaVA modules
 try:
@@ -82,12 +82,12 @@ class MovieChat(lmms):
     def __init__(
         self,
         truncation: Optional[bool] = True,
-        device: Optional[str] = "cuda:0",
+        device: Optional[str] = "mps:0",
         batch_size: Optional[Union[int, str]] = 1,
         pretrained_llama_model: str = "Enxin/MovieChat-vicuna",
         pretrained_llama_proj_model: str = "Enxin/MovieChat-proj",
         attn_implementation: Optional[str] = best_fit_attn_implementation,
-        device_map: Optional[str] = "cuda:0",
+        device_map: Optional[str] = "mps:0",
         use_cache: Optional[bool] = True,
         truncate_context: Optional[bool] = False,  # whether to truncate the context in generation, set it False for LLaVA-1.6
         customized_config: Optional[str] = None,  # ends in json
@@ -105,14 +105,14 @@ class MovieChat(lmms):
         accelerator_kwargs = InitProcessGroupKwargs(timeout=timedelta(weeks=52))
         accelerator = Accelerator(kwargs_handlers=[accelerator_kwargs])
         if accelerator.num_processes > 1:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
         elif accelerator.num_processes == 1 and device_map == "auto":
             self._device = torch.device(device)
             self.device_map = device_map
         else:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
 
         llama_model = snapshot_download(repo_id=pretrained_llama_model) if not osp.isdir(pretrained_llama_model) else pretrained_llama_model
         llama_proj_pth = snapshot_download(repo_id=pretrained_llama_proj_model) if not osp.isdir(pretrained_llama_proj_model) else pretrained_llama_proj_model
@@ -419,7 +419,7 @@ class MovieChat(lmms):
                                 max_value = max(similar_list)
                                 max_index = similar_list.index(max_value)
                                 new_frame_feature = (self.model.short_memory_buffer[max_index].cpu() + self.model.short_memory_buffer[max_index + 1].cpu()) / 2
-                                self.model.short_memory_buffer[max_index] = new_frame_feature.cuda()
+                                self.model.short_memory_buffer[max_index] = new_frame_feature.mps()
                                 del self.model.short_memory_buffer[max_index + 1]
                                 similar_list = []
                                 for frame_i in range(len(self.model.short_memory_buffer) - 1):

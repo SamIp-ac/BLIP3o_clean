@@ -1,6 +1,6 @@
 import torch
 
-torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.mps.matmul.allow_tf32 = True
 
 import copy
 import warnings
@@ -49,9 +49,9 @@ class TinyLlava(lmms):
     def __init__(
         self,
         pretrained: str = "tinyllava/TinyLLaVA-Phi-2-SigLIP-3.1B",
-        device: Optional[str] = "cuda:0",
+        device: Optional[str] = "mps:0",
         batch_size: Optional[Union[int, str]] = 1,
-        device_map="cuda:0",
+        device_map="mps:0",
         conv_mode="phi",  # TODO
         use_cache=True,
         **kwargs,
@@ -63,14 +63,14 @@ class TinyLlava(lmms):
         accelerator_kwargs = InitProcessGroupKwargs(timeout=timedelta(weeks=52))
         accelerator = Accelerator(kwargs_handlers=[accelerator_kwargs])
         if accelerator.num_processes > 1:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
         elif accelerator.num_processes == 1 and device_map == "auto":
             self._device = torch.device(device)
             self.device_map = device_map
         else:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
 
         self._model, self._tokenizer, self._image_processor, self._max_length = load_pretrained_model(pretrained, device_map=self.device_map)
         data_args = self._model.config

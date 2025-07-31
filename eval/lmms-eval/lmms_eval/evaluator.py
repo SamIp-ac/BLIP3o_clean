@@ -95,7 +95,7 @@ def simple_evaluate(
     :param max_batch_size: int, optional
         Maximal batch size to try with automatic batch size detection
     :param device: str, optional
-        PyTorch device (e.g. "cpu" or "cuda:0") for running models
+        PyTorch device (e.g. "cpu" or "mps:0") for running models
     :param use_cache: str, optional
         A path to a sqlite db file for caching model responses. `None` if not caching.
     :param cache_requests: bool, optional
@@ -542,7 +542,7 @@ def evaluate(
 
     if hasattr(lm, "_model"):
         del lm._model
-        torch.cuda.empty_cache()
+        torch.mps.empty_cache()
 
     if WORLD_SIZE > 1:
         # if multigpu, then gather data across all ranks to rank 0

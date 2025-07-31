@@ -58,7 +58,7 @@ class EvaViTWrapper(nn.Module):
         self.device = next(model.parameters()).device
         self.dtype = next(model.parameters()).dtype
         if self.device.type != "meta":
-            model = model.to("cuda")
+            model = model.to("mps")
         self.vision_tower = model.visual
         resize_transform = [t for t in image_processor.transforms if isinstance(t, torchvision.transforms.Resize)][0]
         normalize_transform = [t for t in image_processor.transforms if isinstance(t, torchvision.transforms.Normalize)][0]

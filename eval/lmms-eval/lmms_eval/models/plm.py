@@ -33,7 +33,7 @@ class PerceptionLM(lmms):
     def __init__(
         self,
         pretrained: str = "facebook/Perception-LM-8B",
-        device: Optional[str] = "cuda",
+        device: Optional[str] = "mps",
         batch_size: Optional[Union[int, str]] = 1,
         compile_prefilling=False,
         reduce_generation_overhead=False,
@@ -43,7 +43,7 @@ class PerceptionLM(lmms):
         super().__init__()
 
         accelerator = Accelerator()
-        self._device = torch.device(f"cuda:{accelerator.local_process_index}")
+        self._device = torch.device(f"mps:{accelerator.local_process_index}")
 
         # Collect all arguments into a dictionary
         args = {

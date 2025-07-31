@@ -30,7 +30,7 @@ class InstructBLIP(lmms):
     def __init__(
         self,
         pretrained: str = "Salesforce/instructblip-vicuna-7b",
-        device: Optional[str] = "cuda",
+        device: Optional[str] = "mps",
         dtype: Optional[Union[str, torch.dtype]] = "auto",
         batch_size: Optional[Union[int, str]] = 1,
         **kwargs,
@@ -41,7 +41,7 @@ class InstructBLIP(lmms):
 
         accelerator = Accelerator()
         if accelerator.num_processes > 1:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
         else:
             self._device = device
         self._model = InstructBlipForConditionalGeneration.from_pretrained(pretrained, device_map=self._device)

@@ -129,7 +129,7 @@ from accelerate.utils import InitProcessGroupKwargs
 # The reason for writing the code this way is to avoid errors that occur during multi-GPU inference due to tensors not being on the same device. By ensuring that the first and last layers of the large language model (LLM) are on the same device, we prevent such errors.
 def split_model(model_name, num_layers=None):
     device_map = {}
-    world_size = torch.cuda.device_count()
+    world_size = torch.mps.device_count()
     if num_layers is None:
         num_layers = {
             "InternVL2_5-1B": 24,
@@ -174,8 +174,8 @@ class InternVL2(lmms):
         self,
         pretrained: str = "OpenGVLab/InternVL2-2B",
         modality: str = "image",
-        device: str = "cuda:0",
-        device_map: str = "cuda:0",
+        device: str = "mps:0",
+        device_map: str = "mps:0",
         batch_size: str = "1",
         num_frame: int = 32,
         num_layers=None,
@@ -194,15 +194,15 @@ class InternVL2(lmms):
         accelerator = Accelerator(kwargs_handlers=[accelerator_kwargs])
         self.accelerator = accelerator
         if accelerator.num_processes > 1:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
         elif accelerator.num_processes == 1 and device_map == "auto":
             self._device = torch.device(device)
             device_map = split_model(pretrained.split("/")[-1], num_layers=num_layers)
             self.device_map = device_map
         else:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
 
         self._model = AutoModel.from_pretrained(self.path, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True, trust_remote_code=True, device_map=self.device_map).eval()
         self._tokenizer = AutoTokenizer.from_pretrained(self.path, trust_remote_code=True, device_map=self.device_map)
@@ -304,7 +304,7 @@ class InternVL2(lmms):
             visuals = self.flatten(visuals)
             if self.modality == "image":
                 if visuals:
-                    visuals = [load_image(visual).to(torch.bfloat16).cuda() for visual in visuals]
+                    visuals = [load_image(visual).to(torch.bfloat16).mps() for visual in visuals]
                     pixel_values = torch.cat(visuals, dim=0)
                     num_patches_list = [visual.size(0) for visual in visuals]
                     image_tokens = ["<image>"] * len(visuals)
@@ -318,7 +318,7 @@ class InternVL2(lmms):
                 assert len(visuals) == 1, f"Only one video is supported, but got {len(visuals)} videos."
                 video_path = visuals[0]
                 pixel_values, num_patches_list = load_video(video_path, num_segments=self.num_frame)
-                pixel_values = pixel_values.to(torch.bfloat16).cuda()
+                pixel_values = pixel_values.to(torch.bfloat16).mps()
                 video_prefix = "".join([f"Frame{i+1}: <image>\n" for i in range(len(num_patches_list))])
                 question = video_prefix + contexts
                 response, history = self.model.chat(self.tokenizer, pixel_values, question, gen_kwargs, num_patches_list=num_patches_list, history=None, return_history=True)

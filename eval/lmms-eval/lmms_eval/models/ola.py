@@ -123,7 +123,7 @@ class Ola(lmms):
         self,
         pretrained: str = "THUdyh/Ola-7b",
         truncation: Optional[bool] = True,
-        device: Optional[str] = "cuda:0",
+        device: Optional[str] = "mps:0",
         batch_size: Optional[Union[int, str]] = 1,
         attn_implementation=(
             "sdpa" if torch.__version__ >= "2.1.2" else "eager"
@@ -144,14 +144,14 @@ class Ola(lmms):
         accelerator_kwargs = InitProcessGroupKwargs(timeout=timedelta(weeks=52))
         accelerator = Accelerator(kwargs_handlers=[accelerator_kwargs])
         if accelerator.num_processes > 1:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
         elif accelerator.num_processes == 1 and device_map == "auto":
             self._device = torch.device(device)
             self.device_map = device_map
         else:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
 
         self.pretrained = pretrained
         self.model_name = get_model_name_from_path(pretrained)
@@ -548,19 +548,19 @@ class Ola(lmms):
                 if all(x.shape == image_highres_tensor[0].shape for x in image_highres_tensor):
                     image_highres_tensor = torch.stack(image_highres_tensor, dim=0)
                 if type(image_tensor) is list:
-                    image_tensor = [_image.bfloat16().to("cuda") for _image in image_tensor]
+                    image_tensor = [_image.bfloat16().to("mps") for _image in image_tensor]
                 else:
-                    image_tensor = image_tensor.bfloat16().to("cuda")
+                    image_tensor = image_tensor.bfloat16().to("mps")
                 if type(image_highres_tensor) is list:
-                    image_highres_tensor = [_image.bfloat16().to("cuda") for _image in image_highres_tensor]
+                    image_highres_tensor = [_image.bfloat16().to("mps") for _image in image_highres_tensor]
                 else:
-                    image_highres_tensor = image_highres_tensor.bfloat16().to("cuda")
+                    image_highres_tensor = image_highres_tensor.bfloat16().to("mps")
 
                 # Processing dummy audio, as required by model
-                speechs.append(torch.zeros(1, 3000, 128).bfloat16().to("cuda"))
-                speech_lengths.append(torch.LongTensor([3000]).to("cuda"))
-                speech_wavs.append(torch.zeros([1, 480000]).to("cuda"))
-                speech_chunks.append(torch.LongTensor([1]).to("cuda"))
+                speechs.append(torch.zeros(1, 3000, 128).bfloat16().to("mps"))
+                speech_lengths.append(torch.LongTensor([3000]).to("mps"))
+                speech_wavs.append(torch.zeros([1, 480000]).to("mps"))
+                speech_chunks.append(torch.LongTensor([1]).to("mps"))
 
             # we assume all gen kwargs in the batch are the same
             # this is safe to assume because the `grouper` object ensures it.

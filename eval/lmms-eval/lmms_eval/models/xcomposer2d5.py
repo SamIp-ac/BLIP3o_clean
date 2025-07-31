@@ -31,8 +31,8 @@ class XComposer2D5(lmms):
         self,
         pretrained: str = "internlm/internlm-xcomposer2d5-7b",
         modality: str = "image",
-        device: str = "cuda:0",
-        device_map: str = "cuda:0",
+        device: str = "mps:0",
+        device_map: str = "mps:0",
         batch_size: str = "1",
         tmp_folder: str = "./temp/xcomposer2d5/",
         **kwargs,
@@ -51,14 +51,14 @@ class XComposer2D5(lmms):
         accelerator_kwargs = InitProcessGroupKwargs(timeout=timedelta(weeks=52))
         accelerator = Accelerator(kwargs_handlers=[accelerator_kwargs])
         if accelerator.num_processes > 1:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
         elif accelerator.num_processes == 1 and device_map == "auto":
             self._device = torch.device(device)
             self.device_map = device_map
         else:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
 
         self.path = pretrained
         self._model = AutoModel.from_pretrained(self.path, torch_dtype=torch.bfloat16, trust_remote_code=True, device_map=self.device_map).half().eval()
@@ -169,7 +169,7 @@ class XComposer2D5(lmms):
                 gen_kwargs["num_beams"] = 1
 
             try:
-                with torch.autocast(device_type="cuda", dtype=torch.float16):
+                with torch.autocast(device_type="mps", dtype=torch.float16):
                     response, his = self.model.chat(self.tokenizer, contexts, image, do_sample=False, num_beams=1, use_meta=True, max_new_tokens=gen_kwargs["max_new_tokens"])
             except Exception as e:
                 eval_logger.error(f"Error : {e}")

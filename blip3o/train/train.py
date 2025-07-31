@@ -196,7 +196,7 @@ def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: st
     # if getattr(trainer.args, "tune_vision_model", False):
 
     if trainer.deepspeed:
-        torch.cuda.synchronize()
+        torch.mps.synchronize()
     
 
     # Only save Adapter
@@ -241,7 +241,7 @@ def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: st
             torch.save(weight_to_save, os.path.join(output_dir, f"gen_projector.bin"))
 
     if trainer.deepspeed:
-        torch.cuda.synchronize()
+        torch.mps.synchronize()
         trainer.save_model(output_dir)
         return
 

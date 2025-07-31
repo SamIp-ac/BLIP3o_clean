@@ -22,8 +22,8 @@ class Whisper(lmms):
     def __init__(
         self,
         pretrained: str = "openai/whisper-tiny",
-        device: Optional[str] = "cuda",
-        device_map: Optional[str] = "cuda",
+        device: Optional[str] = "mps",
+        device_map: Optional[str] = "mps",
         batch_size: Optional[Union[int, str]] = 1,
         use_cache: bool = True,
         language: str = "en",
@@ -35,14 +35,14 @@ class Whisper(lmms):
 
         accelerator = Accelerator()
         if accelerator.num_processes > 1:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
         elif accelerator.num_processes == 1 and device_map == "auto":
             self._device = torch.device(device)
             self.device_map = device_map
         else:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
 
         self._model = WhisperForConditionalGeneration.from_pretrained(
             pretrained,
@@ -177,7 +177,7 @@ class Whisper(lmms):
             audios = [downsample_audio(audio["array"], audio["sampling_rate"], sampling_rate) for audio in flattened_audios]
             inputs = self.processor(audio=audios, return_tensors="pt", sampling_rate=sampling_rate)
             if self.device_map == "auto":
-                inputs = inputs.to("cuda")
+                inputs = inputs.to("mps")
             else:
                 inputs = inputs.to(self.device)
 

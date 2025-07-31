@@ -164,8 +164,8 @@ def tokenize_prompts(prompts=None, tokens_to_generate=None, add_BOS=None, rank=0
     """Tokenize prompts and make them avaiable on all ranks."""
 
     # On all ranks set to None so we can pass them to functions
-    prompts_tokens_cuda_long_tensor = None
-    prompts_length_cuda_long_tensor = None
+    prompts_tokens_mps_long_tensor = None
+    prompts_length_mps_long_tensor = None
 
     # On the specified rank, build the above.
     attention_mask = None
@@ -173,17 +173,17 @@ def tokenize_prompts(prompts=None, tokens_to_generate=None, add_BOS=None, rank=0
         assert prompts is not None
         assert tokens_to_generate is not None
         # Tensor of tokens padded and their unpadded length.
-        prompts_tokens_cuda_long_tensor, prompts_length_cuda_long_tensor, attention_mask = _tokenize_prompts_and_batch(prompts, tokens_to_generate, add_BOS, tokenizer, **kwargs)
+        prompts_tokens_mps_long_tensor, prompts_length_mps_long_tensor, attention_mask = _tokenize_prompts_and_batch(prompts, tokens_to_generate, add_BOS, tokenizer, **kwargs)
         # We need the sizes of these tensors for the boradcast
         [
-            prompts_tokens_cuda_long_tensor.size(0),  # Batch size
-            prompts_tokens_cuda_long_tensor.size(1),
+            prompts_tokens_mps_long_tensor.size(0),  # Batch size
+            prompts_tokens_mps_long_tensor.size(1),
         ]  # Sequence lenght
 
     return {
-        "input_ids": prompts_tokens_cuda_long_tensor,
+        "input_ids": prompts_tokens_mps_long_tensor,
         "attention_mask": attention_mask,
-        # "prompt_length": prompts_length_cuda_long_tensor,
+        # "prompt_length": prompts_length_mps_long_tensor,
     }
 
 

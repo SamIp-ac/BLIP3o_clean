@@ -28,8 +28,8 @@ def set_global_seed(seed=42):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    torch.mps.manual_seed(seed)
+    torch.mps.manual_seed_all(seed)
 
 def add_template(prompt):
     conv = conv_templates['qwen'].copy()
@@ -142,8 +142,8 @@ def main(opt):
     )
     
     device_id = 0
-    pipe.vae.to(f'cuda:{device_id}')
-    pipe.unet.to(f'cuda:{device_id}')
+    pipe.vae.to(f'mps:{device_id}')
+    pipe.unet.to(f'mps:{device_id}')
 
     # Load all prompts
     with open('geneval_prompt.jsonl') as fp:

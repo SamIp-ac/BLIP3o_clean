@@ -35,8 +35,8 @@ class Qwen2_VL(lmms):
     def __init__(
         self,
         pretrained: str = "Qwen/Qwen2-VL-7B-Instruct",
-        device: Optional[str] = "cuda",
-        device_map: Optional[str] = "cuda",
+        device: Optional[str] = "mps",
+        device_map: Optional[str] = "mps",
         batch_size: Optional[Union[int, str]] = 1,
         use_cache=True,
         use_flash_attention_2: Optional[bool] = False,
@@ -55,8 +55,8 @@ class Qwen2_VL(lmms):
 
         accelerator = Accelerator()
         if accelerator.num_processes > 1:
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
         # Simplified logic for single process
         else:  # accelerator.num_processes == 1
             self._device = torch.device(device)
@@ -350,7 +350,7 @@ class Qwen2_VL(lmms):
             inputs = self.processor(text=texts, images=image_inputs, videos=video_inputs, padding=True, return_tensors="pt")
 
             if self.device_map == "auto":
-                inputs = inputs.to("cuda")  # Assuming 'cuda' is the target for 'auto' on single GPU
+                inputs = inputs.to("mps")  # Assuming 'mps' is the target for 'auto' on single GPU
             else:
                 inputs = inputs.to(self.device)
 

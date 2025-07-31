@@ -54,7 +54,7 @@ def process(image, question, tokenizer, image_processor, model_config, conv_mode
     image_size = [image.size]
     image_tensor = process_images([image], image_processor, model_config)
 
-    input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).cuda()
+    input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).mps()
 
     return input_ids, image_tensor, image_size, prompt
 
@@ -124,7 +124,7 @@ class Cambrian(lmms):
     def __init__(
         self,
         pretrained: str = "nyu-visionx/cambrian-8b",
-        device: Optional[str] = "cuda",
+        device: Optional[str] = "mps",
         device_map="auto",
         batch_size: Optional[Union[int, str]] = 1,
         trust_remote_code: Optional[bool] = True,
@@ -135,7 +135,7 @@ class Cambrian(lmms):
         assert not kwargs, f"Unexpected kwargs: {kwargs}"
 
         accelerator = Accelerator()
-        self._device = torch.device(f"cuda:{accelerator.local_process_index}") if accelerator.num_processes > 1 else device
+        self._device = torch.device(f"mps:{accelerator.local_process_index}") if accelerator.num_processes > 1 else device
 
         self.model_name = get_model_name_from_path(pretrained)
         tokenizer, model, self.image_processor, context_len = load_pretrained_model(pretrained, None, self.model_name, device_map=self._device)

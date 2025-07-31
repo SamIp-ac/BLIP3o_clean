@@ -47,7 +47,7 @@ class Idefics2(lmms):
         self,
         pretrained: str = "HuggingFaceM4/idefics2-8b",
         revision: str = "main",
-        device: str = "cuda",
+        device: str = "mps",
         dtype: Optional[Union[str, torch.dtype]] = "float16",
         batch_size: int = 1,
         trust_remote_code: Optional[bool] = False,
@@ -64,8 +64,8 @@ class Idefics2(lmms):
 
         accelerator = Accelerator()
         if accelerator.num_processes > 1 and device_map == "":
-            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            self._device = torch.device(f"mps:{accelerator.local_process_index}")
+            self.device_map = f"mps:{accelerator.local_process_index}"
         else:
             self._device = torch.device(device)
             self.device_map = device_map

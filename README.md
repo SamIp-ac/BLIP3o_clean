@@ -1,5 +1,22 @@
 # 🌌 BLIP3-o
 
+## For macos
+```shell
+conda create -n blip3o_py311 python=3.11
+conda activate blip3o_py311
+
+# replace all mps into mps for macos m series
+pip install --upgrade pip  setuptools
+pip install -r requirements.txt
+pip install -U gradio
+
+cd gradio
+python app.py ../../models/BLIP3o-Model-8B
+# on mac studio the model abs path: /Users/fujifilm-ai-m02/Documents/models--BLIP3o--BLIP3o-Model-8B
+
+# for m01
+
+```
 BLIP3-o is a unified multimodal model that combines the reasoning and instruction following strength of autoregressive models with the generative power of diffusion models. Unlike prior works that diffuse VAE features or raw pixels, BLIP3-o diffuses semantically rich **CLIP image features**, enabling a powerful and efficient architecture for both image understanding and generation.
 
 ## 📖 [Arxiv](http://arxiv.org/abs/2505.09568)

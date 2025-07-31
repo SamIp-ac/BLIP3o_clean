@@ -59,8 +59,8 @@ pipe = DiffusionPipeline.from_pretrained(
 )
 
 
-pipe.vae.to(f'cuda:{device_1}')
-pipe.unet.to(f'cuda:{device_1}')
+pipe.vae.to(f'mps:{device_1}')
+pipe.unet.to(f'mps:{device_1}')
 
 
 
@@ -97,8 +97,8 @@ def set_global_seed(seed=42):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    torch.mps.manual_seed(seed)
+    torch.mps.manual_seed_all(seed)
 
 
 

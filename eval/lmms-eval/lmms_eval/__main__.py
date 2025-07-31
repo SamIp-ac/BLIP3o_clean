@@ -119,7 +119,7 @@ def parse_eval_args() -> argparse.Namespace:
         "--device",
         type=str,
         default=None,
-        help="Device to use (e.g. cuda, cuda:0, cpu)",
+        help="Device to use (e.g. mps, mps:0, cpu)",
     )
     parser.add_argument(
         "--output_path",
