@@ -231,7 +231,7 @@ def process_image(prompt: str, img: Image.Image) -> str:
 
         # 6. 生成回應 (在 MPS 上執行)
         print("[Processing] Generating response...")
-        generated_ids = model.generate(**inputs, max_new_tokens=1024)
+        generated_ids = model.generate(**inputs, max_new_tokens=4096)
         print(f"[Processing] Generated IDs device: {generated_ids.device}")
         
         # 7. 移除輸入部分，只保留生成的部分
@@ -355,4 +355,4 @@ with gr.Blocks(title="BLIP3-o Image Understanding (MPS)") as demo:
 if __name__ == "__main__":
     # 啟動 Gradio 應用
     print("Launching Gradio interface...")
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    demo.launch(server_name="0.0.0.0", server_port=7861)
