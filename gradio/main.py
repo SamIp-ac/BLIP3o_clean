@@ -155,6 +155,7 @@ from PIL import Image
 import torch
 import gradio as gr
 from transformers import AutoProcessor
+import gc
 
 # === 在模組層級宣告全局變數 ===
 model = None
@@ -233,7 +234,7 @@ def process_image(prompt: str, img: Image.Image) -> str:
         print(f"[Processing] Input tensors moved to device: {inputs.input_ids.device}")
 
         print("[Processing] Generating response...")
-        generated_ids = model.generate(**inputs, max_new_tokens=4096)
+        generated_ids = model.generate(**inputs, max_new_tokens=2048)
         print(f"[Processing] Generated IDs device: {generated_ids.device}")
 
         input_token_len = inputs.input_ids.shape[1]
@@ -253,6 +254,11 @@ def process_image(prompt: str, img: Image.Image) -> str:
         print(f"[Error] Processing failed: {e}")
         print(error_details)
         return f"Error during processing: {str(e)}\nDetails:\n{error_details}"
+    finally:
+        # 無論成功或失敗，都嘗試釋放資源
+        gc.collect()
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
 
 
 # --- 初始化模型 ---
