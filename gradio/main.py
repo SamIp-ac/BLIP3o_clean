@@ -253,35 +253,34 @@ def process_image(prompt: str, img: Image.Image) -> str:
         print(error_details)
         return f"Error during processing: {str(e)}\nDetails:\n{error_details}"
 
-# --- 初始化模型 (在啟動 Gradio 前) ---
 def initialize_model():
-    """
-    初始化模型和處理器。這在 Gradio 應用啟動時執行一次。
-    """
     global model, processor
-    
+
     if len(sys.argv) != 2:
         raise ValueError("Usage: python image_understanding_gradio_mps.py <path_to_blip3o_model>")
 
     model_path = os.path.expanduser(sys.argv[1])
     
     print("Loading model and processor...")
-    disable_torch_init() # 根據原始腳本
-    
-    # 載入 BLIP3o 模型組件 (tokenizer, multi_model)
-    tokenizer, multi_model, _ = load_pretrained_model(model_path, device=DEVICE) # 傳遞 device 參數
-    
-    # ***關鍵修改*** 確保模型在正確的設備上
-    # (雖然 load_pretrained_model 應該已經處理了，但再確認一次)
-    multi_model = multi_model.to(DEVICE) 
-    print(f"Model confirmed on device: {next(multi_model.parameters()).device}")
-    
-    # 載入 Qwen-VL processor
-    processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct")
-    
-    model = multi_model # 賦值給全局變數
-    print("Model and processor loaded successfully.")
-    return "Model loaded successfully!"
+    disable_torch_init()
+
+    try:
+        tokenizer, multi_model, _ = load_pretrained_model(model_path, device=DEVICE)
+        multi_model = multi_model.to(DEVICE)
+        
+        # 載入 processor
+        processor_local = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct")
+        
+        # 成功後才賦值給 global
+        global model, processor
+        model = multi_model
+        processor = processor_local
+
+        print("Model and processor loaded successfully.")
+        return "Model loaded successfully!"
+    except Exception as e:
+        print(f"Error during model initialization: {e}")
+        raise
 
 # --- Gradio 介面 ---
 with gr.Blocks(title="BLIP3-o Image Understanding (MPS)") as demo:
@@ -314,14 +313,7 @@ with gr.Blocks(title="BLIP3-o Image Understanding (MPS)") as demo:
             )
 
         with gr.Column(scale=3):
-            output_text    = gr.Textbox(label="Model Response", lines=10, interactive=False)
-
-    # --- 事件處理 ---
-    # 初始化狀態
-    model_status = gr.Textbox(label="Model Status", value="Loading model...", interactive=False)
-    
-    # 在介面載入時初始化模型
-    demo.load(initialize_model, None, model_status)
+            output_text = gr.Textbox(label="Model Response", lines=10, interactive=False)
     
     # 綁定按鈕事件
     run_btn.click(
@@ -352,7 +344,19 @@ with gr.Blocks(title="BLIP3-o Image Understanding (MPS)") as demo:
     )
 
 
+    demo.launch(server_name="0.0.0.0", server_port=7861)
 if __name__ == "__main__":
-    # 啟動 Gradio 應用
     print("Launching Gradio interface...")
+    try:
+        status = initialize_model()
+        print(status)
+    except Exception as e:
+        print(f"❌ Failed to initialize model: {e}")
+        sys.exit(1)
+
+    if model is None or processor is None:
+        print("❌ Model or processor failed to initialize.")
+        sys.exit(1)
+
+    # === 啟動 Gradio ===
     demo.launch(server_name="0.0.0.0", server_port=7861)
