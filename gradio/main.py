@@ -148,7 +148,7 @@
 # if __name__ == "__main__":
 #     main()
 
-# image_understanding_gradio_mps.py
+# main.py
 import sys
 import os
 from PIL import Image
