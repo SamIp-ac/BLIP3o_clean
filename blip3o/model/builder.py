@@ -29,18 +29,20 @@ def load_pretrained_model(
 
     # kwargs = {"device_map": device_map, **kwargs} # 原始寫法，但 device_map 與 .to() 有衝突風險
 
-    if device == "cuda":
-        if use_flash_attn:
-             kwargs['torch_dtype'] = torch.bfloat16
-        else:
-             kwargs['torch_dtype'] = torch.float16
+    # Only set torch_dtype if not already specified in kwargs
+    if 'torch_dtype' not in kwargs:
+        if device == "cuda":
+            if use_flash_attn:
+                 kwargs['torch_dtype'] = torch.bfloat16
+            else:
+                 kwargs['torch_dtype'] = torch.float16
 
-    elif device == "mps":
-        kwargs['torch_dtype'] = torch.float16
-        kwargs.pop('device_map', None)
-        device_map = None
-    else: # cpu
-        kwargs['torch_dtype'] = torch.float32
+        elif device == "mps":
+            kwargs['torch_dtype'] = torch.float16
+        else: # cpu
+            kwargs['torch_dtype'] = torch.float32
+
+    if device != "cuda":
         kwargs.pop('device_map', None)
         device_map = None
 
@@ -78,9 +80,13 @@ def load_pretrained_model(
     tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
 
     print(f"Loading model from {model_path} with kwargs: {kwargs}...")
+
+    # Set default low_cpu_mem_usage if not provided
+    if 'low_cpu_mem_usage' not in kwargs:
+        kwargs['low_cpu_mem_usage'] = True
+
     model = blip3oQwenForInferenceLM.from_pretrained(
         model_path,
-        low_cpu_mem_usage=True,
         **{k: v for k, v in kwargs.items() if k not in ['device_map'] or (k == 'device_map' and device == 'cuda')} # 條件性傳遞 device_map
     )
     print("Model loaded into RAM.")
@@ -141,7 +147,8 @@ def load_pretrained_model_lmms_eval(model_path, load_8bit=False, load_4bit=False
 
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 
-    model = blip3oQwenForInferenceLM.from_pretrained(model_path, low_cpu_mem_usage=True, torch_dtype=torch.float16)
+    # Use the configured kwargs, don't hardcode parameters
+    model = blip3oQwenForInferenceLM.from_pretrained(model_path, **kwargs)
 
     image_processor = None
     mm_use_im_start_end = getattr(model.config, "mm_use_im_start_end", False)

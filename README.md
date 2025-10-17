@@ -10,6 +10,8 @@ pip install --upgrade pip  setuptools
 pip install -r requirements.txt
 pip install -U gradio
 
+pip install -e .
+
 cd gradio
 python app.py ../../models/BLIP3o-Model-8B
 # on mac studio the model abs path: /Users/fujifilm-ai-m02/Documents/models--BLIP3o--BLIP3o-Model-8B
