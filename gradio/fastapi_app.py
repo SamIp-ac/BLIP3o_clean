@@ -1,4 +1,4 @@
-# fastapi_app.py
+# this file relative path: gradio/fastapi_app.py, root project filder name: BLIP3O_MPS2
 import os
 import sys
 import gc
@@ -26,7 +26,7 @@ except ImportError as e:
 
 MODEL = None
 PROCESSOR = None
-DEVICE = 'mps'
+DEVICE = os.getenv("DEVICE", "mps")
 
 def preprocess_image(
     image: Image.Image, 
@@ -225,7 +225,7 @@ async def create_chat_completion(payload: RequestPayload):
 
 @app.get("/")
 def read_root():
-    return {"status": "BLIP3o API is running." if MODEL else "BLIP3o API is starting, model not ready."}
+    return {"status": "BLIP3o API is running. System prompt input will be ignored in this api, and model name you can use 'blip'." if MODEL else "BLIP3o API is starting, model not ready."}
 
 
 if __name__ == "__main__":

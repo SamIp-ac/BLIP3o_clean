@@ -21,7 +21,7 @@ try:
     from pdf2image import convert_from_bytes
 except ImportError:
     convert_from_bytes = None
-    print("⚠️ Warning: pdf2image is not installed. PDF processing will be disabled.")
+    print("Warning: pdf2image may not installed. PDF processing may be disabled.")
 
 try:
     from blip3o.model.builder import load_pretrained_model
@@ -121,12 +121,20 @@ class RequestPayload(BaseModel):
 app = FastAPI(title="BLIP3o High-Performance API")
 
 def run_inference(prompt: str, images: List[Image.Image]) -> str:
-    """
-    一個獨立的、高性能的推理函數。
-    【版本3：已簡化並移除了不必要的開銷】
-    """
     try:
-        text_prompt_for_qwen = f"<|im_start|>user\nPicture 1:<img>{prompt}<|im_end|>\n<|im_start|>assistant\n"
+        
+        message_content = []
+        for _ in images:
+            message_content.append({"type": "image"})
+        message_content.append({"type": "text", "text": prompt})
+        
+        messages = [{"role": "user", "content": message_content}]
+        
+        text_prompt_for_qwen = PROCESSOR.apply_chat_template(
+            messages, 
+            tokenize=False, 
+            add_generation_prompt=True
+        )
 
         inputs = PROCESSOR(
             text=[text_prompt_for_qwen],
@@ -134,7 +142,7 @@ def run_inference(prompt: str, images: List[Image.Image]) -> str:
             padding=True,
             return_tensors="pt",
         ).to(DEVICE)
-
+        
         generated_ids = MODEL.generate(**inputs, max_new_tokens=2048)
 
         input_token_len = inputs.input_ids.shape[1]
@@ -199,7 +207,7 @@ async def create_chat_completion(payload: RequestPayload):
 
 @app.get("/")
 def read_root():
-    return {"status": "BLIP3o API is running." if MODEL else "BLIP3o API is starting, model not ready."}
+    return {"status": "BLIP3o API is running. System prompt input will be ignored in this api." if MODEL else "BLIP3o API is starting, model not ready."}
 
 
 if __name__ == "__main__":

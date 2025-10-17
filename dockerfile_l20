@@ -1,0 +1,27 @@
+# L20 用
+FROM pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates gnupg git wget curl \
+    libglib2.0-0 libsm6 libxrender1 libxext6 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --upgrade pip
+
+WORKDIR /workspace
+COPY . /workspace
+
+# 安裝 PyTorch 與 CUDA 12.1 相容版本
+RUN pip install --no-cache-dir torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 \
+    --extra-index-url https://download.pytorch.org/whl/cu121
+
+# 安裝其他需求 + flash-attn + xformers
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install flash-attn xformers
+
+ENV PYTHONPATH=/workspace
+
+EXPOSE 9998
+CMD ["python3", "gradio/fastapi_app.py", "/models/blip3o"]

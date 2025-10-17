@@ -14,6 +14,29 @@ cd gradio
 python app.py ../../models/BLIP3o-Model-8B
 # on mac studio the model abs path: /Users/fujifilm-ai-m02/Documents/models--BLIP3o--BLIP3o-Model-8B
 
+# Build image for local device
+docker build -t samipdocker/blip3o-api .
+
+# Build image for amd64
+docker buildx build \
+  --platform linux/amd64 \
+  -t samipdocker/blip3o-api:latest \
+  . --push
+
+# Run image
+# For windows CMD
+docker run --gpus all -it --rm -p 9998:9998 ^
+  -v C:\Users\user\dev\BLIP3o-Model-8B:/models/blip3o ^
+  -e DEVICE=cuda ^
+  samipdocker/blip3o-api
+
+
+# For linux
+docker run --gpus all -it --rm -p 9998:9998 \
+  -v /home/you/models/blip3o:/models/blip3o \
+  -e DEVICE=cuda \
+  samipdocker/blip3o-api
+
 # for m01
 
 
