@@ -353,7 +353,7 @@ async def lifespan(app: FastAPI):
         logger.info("CPU executor shutdown completed")
 
 app = FastAPI(
-    title="BLIP3o OCR API v3",
+    title="BLIP3o OCR API v4",
     description="Optimized API for long document OCR with memory management",
     lifespan=lifespan
 )
@@ -604,7 +604,7 @@ def read_root():
         model_ready = MODEL is not None
 
     return {
-        "status": "BLIP3o OCR API v3 is running" if model_ready else "BLIP3o OCR API v3 is starting",
+        "status": "BLIP3o OCR API v4 is running" if model_ready else "BLIP3o OCR API v4 is starting",
         "version": "3.0",
         "features": [
             "Memory management",

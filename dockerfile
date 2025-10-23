@@ -56,4 +56,4 @@ ENV PYTHONPATH=/workspace
 
 EXPOSE 9998
 
-CMD ["python3", "gradio/fastapi_app.py", "/models/blip3o"]
+CMD ["python3", "gradio/fastapi_app_v4.py", "/models/blip3o"]

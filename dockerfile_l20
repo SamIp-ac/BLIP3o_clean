@@ -1,4 +1,4 @@
-# L20 用
+# L20 用, but no in use
 FROM pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -24,4 +24,4 @@ RUN pip install --no-cache-dir -r requirements.txt \
 ENV PYTHONPATH=/workspace
 
 EXPOSE 9998
-CMD ["python3", "gradio/fastapi_app.py", "/models/blip3o"]
+CMD ["python3", "gradio/fastapi_app_v4.py", "/models/blip3o"]
