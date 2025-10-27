@@ -12,6 +12,8 @@ import asyncio
 import threading
 import time
 import logging
+import random
+import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Union, Literal, Optional, Dict, Any
 from pathlib import Path
@@ -22,7 +24,7 @@ from contextlib import asynccontextmanager
 
 import torch
 import requests
-from PIL import Image, ImageOps
+from PIL import Image
 from fastapi import FastAPI, HTTPException, File, UploadFile, Response, BackgroundTasks
 from pydantic import BaseModel, Field
 from fastapi.concurrency import run_in_threadpool
@@ -93,43 +95,23 @@ def cleanup_memory():
     except Exception as e:
         logger.warning(f"Memory cleanup failed: {e}")
 
-def preprocess_image_optimized(
+def preprocess_image(
     image: Image.Image,
     max_size: int = MAX_IMAGE_SIZE,
-    quality: int = 85
+    resample_method = Image.Resampling.LANCZOS
 ) -> Image.Image:
     """
-    Optimized image preprocessing with better memory management
+    檢查圖片分辨率，如果任何一邊超過 max_size，就按比例縮小圖片。
     """
-    try:
-        # Convert to RGB early to avoid format issues
-        if image.mode != 'RGB':
-            image = image.convert('RGB')
+    width, height = image.size
 
-        width, height = image.size
+    if width > max_size or height > max_size:
+        logger.info(f"圖片原始分辨率 ({width}x{height}) 過高，正在縮小...")
+        image.thumbnail((max_size, max_size), resample_method)
+        new_width, new_height = image.size
+        logger.info(f"圖片已縮小至 ({new_width}x{new_height})。")
 
-        # Only resize if necessary
-        if width > max_size or height > max_size:
-            # Calculate new dimensions maintaining aspect ratio
-            if width > height:
-                new_width = max_size
-                new_height = int((height * max_size) / width)
-            else:
-                new_height = max_size
-                new_width = int((width * max_size) / height)
-
-            # Use high-quality resampling
-            image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-
-        # Optimize for memory usage
-        image = ImageOps.exif_transpose(image)
-
-        return image
-
-    except Exception as e:
-        logger.error(f"Image preprocessing failed: {e}")
-        # Return original image as fallback
-        return image.convert('RGB') if image.mode != 'RGB' else image
+    return image
 
 async def load_image_from_source_optimized(source: str) -> Image.Image:
     """Optimized async image loading with better error handling"""
@@ -165,7 +147,7 @@ async def load_image_from_source_optimized(source: str) -> Image.Image:
 async def preprocess_image_async(image: Image.Image) -> Image.Image:
     """Async image preprocessing"""
     def _preprocess():
-        return preprocess_image_optimized(image)
+        return preprocess_image(image)
 
     try:
         # Use the global CPU executor for parallel processing
@@ -243,6 +225,20 @@ def run_inference_optimized(prompt: str, images: List[Image.Image], max_new_toke
     """Optimized inference with better memory management and thread safety"""
     with MODEL_LOCK:  # Protect against concurrent access to global MODEL and PROCESSOR
         try:
+            # Set random seed for each inference to avoid cache accumulation
+            seed = random.randint(0, 2**31 - 1)
+            torch.manual_seed(seed)
+            np.random.seed(seed)
+            random.seed(seed)
+            
+            if torch.backends.mps.is_available() and DEVICE == "mps":
+                torch.mps.manual_seed(seed)
+            elif torch.cuda.is_available() and DEVICE == "cuda":
+                torch.cuda.manual_seed(seed)
+                torch.cuda.manual_seed_all(seed)
+            
+            logger.info(f"Using random seed: {seed} for this inference")
+            
             # Prepare message content - CORRECTED: Include actual image objects
             message_content = []
             for img in images:
@@ -273,14 +269,14 @@ def run_inference_optimized(prompt: str, images: List[Image.Image], max_new_toke
             # Move to device
             inputs = inputs.to(DEVICE)
 
-            # Generate with optimized settings
+            # Generate with optimized settings (no cache for independent OCR tasks)
             with torch.no_grad():
                 generated_ids = MODEL.generate(
                     **inputs,
                     max_new_tokens=max_new_tokens,  # Use dynamic max_new_tokens from request
                     do_sample=False,  # Deterministic for OCR tasks
                     pad_token_id=PROCESSOR.tokenizer.eos_token_id,
-                    use_cache=True
+                    use_cache=False  # Disable cache for independent OCR processing
                 )
 
             # Extract response
