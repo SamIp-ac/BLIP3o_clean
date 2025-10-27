@@ -269,14 +269,14 @@ def run_inference_optimized(prompt: str, images: List[Image.Image], max_new_toke
             # Move to device
             inputs = inputs.to(DEVICE)
 
-            # Generate with optimized settings (no cache for independent OCR tasks)
+            # Generate with optimized settings
             with torch.no_grad():
                 generated_ids = MODEL.generate(
                     **inputs,
                     max_new_tokens=max_new_tokens,  # Use dynamic max_new_tokens from request
                     do_sample=False,  # Deterministic for OCR tasks
                     pad_token_id=PROCESSOR.tokenizer.eos_token_id,
-                    use_cache=False  # Disable cache for independent OCR processing
+                    use_cache=True  # Enable KV cache for better performance
                 )
 
             # Extract response
