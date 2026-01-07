@@ -22,7 +22,14 @@ docker build -t samipdocker/blip3o-api .
 # Build image for amd64
 docker buildx build \
   --platform linux/amd64 \
-  -t samipdocker/blip3o-api:latest \
+  -t samipdocker/blip3o-api:amd \
+  . --push
+
+# Build image for arm64 (GB10)
+docker buildx build \
+  --platform linux/arm64 \
+  -f dockerfile_arm64 \
+  -t samipdocker/blip3o-api:arm64 \
   . --push
 
 # Run image
@@ -35,9 +42,9 @@ docker run --gpus all -it --rm -p 9998:9998 ^
 
 # For linux
 docker run --gpus all -it --rm -p 9998:9998 \
-  -v /home/you/models/blip3o:/models/blip3o \
+  -v [YOUR_MODEL_PATH]:/models/blip3o \
   -e DEVICE=cuda \
-  samipdocker/blip3o-api
+  samipdocker/blip3o-api:arm64
 
 # for m01
 

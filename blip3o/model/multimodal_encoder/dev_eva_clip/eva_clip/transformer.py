@@ -188,7 +188,7 @@ class Attention(nn.Module):
     def forward(self, x, attn_mask: Optional[torch.Tensor] = None):
         L, N, C = x.shape
         q, k, v = F.linear(x, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
-        if self.xattn:
+        if self.xattn and xops is not None:
             q = q.contiguous().view(L, N, self.num_heads, -1).transpose(0, 1)
             k = k.contiguous().view(L, N, self.num_heads, -1).transpose(0, 1)
             v = v.contiguous().view(L, N, self.num_heads, -1).transpose(0, 1)
@@ -273,7 +273,7 @@ class CustomAttention(nn.Module):
         N_q, B_q, C_q = q.shape
         N_k, B_k, C_k = k.shape
         N_v, B_v, C_v = v.shape
-        if self.xattn:
+        if self.xattn and xops is not None:
             # B, N, C -> B, N, num_heads, C
             q = q.permute(1, 0, 2).reshape(B_q, N_q, self.num_heads, -1)
             k = k.permute(1, 0, 2).reshape(B_k, N_k, self.num_heads, -1)

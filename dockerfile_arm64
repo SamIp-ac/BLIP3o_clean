@@ -1,0 +1,91 @@
+# Use CUDA devel image for xformers compilation (needs nvcc and CUDA development tools)
+FROM nvidia/cuda:12.8.0-devel-ubuntu24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install system dependencies + Python 3.12
+# Note: Build tools are commented out by default. Uncomment if you want to compile xformers from source
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 python3.12-venv python3-pip \
+    python3.12-dev \
+    git wget curl ca-certificates gnupg \
+    libglib2.0-0 libsm6 libxrender1 libxext6 \
+    # Uncomment below if you want to compile xformers from source (takes 30-60 minutes)
+    build-essential \
+    ninja-build \
+    cmake \
+    g++ \
+    gcc \
+    make \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set Python 3.12 as default
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
+
+# Create virtual environment
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Upgrade pip inside venv
+RUN pip install --upgrade pip setuptools wheel
+
+# Set working directory
+WORKDIR /workspace
+COPY . /workspace
+
+# ---------------------------------------------------
+# Step 1: Install PyTorch 2.8.0 (CUDA 12.8 build)
+# ---------------------------------------------------
+RUN pip install --no-cache-dir torch==2.9.0+cu128 torchvision==0.24.0 torchaudio==2.9.0 \
+    --index-url https://download.pytorch.org/whl/cu128
+
+# ---------------------------------------------------
+# Step 2: Install dependencies (excluding torch/flash-attn/xformers)
+# ---------------------------------------------------
+# 這裡建議你準備一個 requirements.base.txt（不包含 torch / flash-attn / xformers）
+RUN pip install --no-cache-dir -r requirements.txt
+
+# ---------------------------------------------------
+# Step 3: Install xformers from source (for ARM64 GB10)
+# ---------------------------------------------------
+# Note: xformers官方不提供ARM64预构建wheel，需要从源码编译
+# 编译时间：30-60分钟，取决于硬件性能
+# 设置编译环境变量
+ENV MAX_JOBS=1
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=${CUDA_HOME}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
+ENV TORCH_CUDA_ARCH_LIST="8.0;9.0"
+# Support Ampere and Hopper/Blackwell
+
+# Install xformers build dependencies
+RUN pip install --no-cache-dir \
+    filelock \
+    fsspec \
+    sympy \
+    networkx
+
+# Compile and install xformers from source
+# This will take 30-60 minutes depending on hardware
+# Note: If you get "cannot allocate memory" error, reduce MAX_JOBS to 1 or 2
+RUN MAX_JOBS=1 pip install --no-cache-dir --no-build-isolation "xformers>=0.0.30"
+
+# Verify xformers installation
+RUN python3 -c "import xformers; print(f'xformers version: {xformers.__version__}')" || echo "Warning: xformers import failed, will use fallback attention"
+
+# ---------------------------------------------------
+# Step 4: Install prebuilt flash-attn wheel
+# ---------------------------------------------------
+RUN pip install --no-cache-dir \
+    https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.6.4/flash_attn-2.8.3+cu128torch2.8-cp312-cp312-linux_aarch64.whl
+# Optional flags to control flash-attn/xformers
+ENV FLASH_ATTENTION_DISABLE=0
+ENV XFORMERS_DISABLE_FLASH_ATTN=0
+ENV XFORMERS_DISABLE_TRITON=0
+
+# Set PYTHONPATH
+ENV PYTHONPATH=/workspace
+
+EXPOSE 9998
+
+CMD ["python3", "gradio/fastapi_app_v4.py", "/models/blip3o"]
