@@ -1,3 +1,4 @@
+# NOT Working, use dockerfile_arm64_no_xformers instead
 # Use CUDA devel image for xformers compilation (needs nvcc and CUDA development tools)
 FROM nvidia/cuda:12.8.0-devel-ubuntu24.04
 
@@ -34,9 +35,13 @@ WORKDIR /workspace
 COPY . /workspace
 
 # ---------------------------------------------------
-# Step 1: Install PyTorch 2.8.0 (CUDA 12.8 build)
+# Step 1: Install PyTorch 2.9.1 (CUDA 12.8 build) for GB10 xformers support
+# Note: Install torch first, then let pip resolve compatible torchvision/torchaudio
+# If 2.9.1 is not available, fallback to 2.9.0
 # ---------------------------------------------------
-RUN pip install --no-cache-dir torch==2.9.0+cu128 torchvision==0.24.0 torchaudio==2.9.0 \
+RUN pip install --no-cache-dir torch==2.9.1 \
+    --index-url https://download.pytorch.org/whl/cu128
+RUN pip install --no-cache-dir torchvision torchaudio \
     --index-url https://download.pytorch.org/whl/cu128
 
 # ---------------------------------------------------
@@ -51,12 +56,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Note: xformers官方不提供ARM64预构建wheel，需要从源码编译
 # 编译时间：30-60分钟，取决于硬件性能
 # 设置编译环境变量
-ENV MAX_JOBS=2
+ENV MAX_JOBS=1
 ENV CUDA_HOME=/usr/local/cuda
 ENV PATH=${CUDA_HOME}/bin:${PATH}
 ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
-ENV TORCH_CUDA_ARCH_LIST="8.0;9.0"
-# Support Ampere and Hopper/Blackwell
+ENV TORCH_CUDA_ARCH_LIST="12.1"
+# Only compile for Blackwell GB10 (sm_12.1) - faster compilation
+# If you need support for other GPUs, use "8.0;9.0;12.1"
 
 # Install xformers build dependencies
 RUN pip install --no-cache-dir \
@@ -65,10 +71,25 @@ RUN pip install --no-cache-dir \
     sympy \
     networkx
 
-# Compile and install xformers from source
+# Compile and install xformers from source (GitHub clone method - optimized for Blackwell GB10)
+# v0.0.33.post2 includes Blackwell GPU support (cutlass fmha Op for Blackwell GPUs)
+# Using git clone with --recursive to ensure submodules are included
+# TORCH_CUDA_ARCH_LIST="12.1" - only compile for GB10 (faster)
+# To support multiple GPUs, use "8.0;9.0;12.1" (but slower compilation)
+
+# Note: If you get "cannot allocate memory" error, reduce MAX_JOBS to 1
+# RUN MAX_JOBS=2 pip install -v --no-cache-dir --no-build-isolation \
+#     "git+https://github.com/facebookresearch/xformers.git@v0.0.33.post1#egg=xformers"
+
 # This will take 30-60 minutes depending on hardware
-# Note: If you get "cannot allocate memory" error, reduce MAX_JOBS to 1 or 2
-RUN MAX_JOBS=2 pip install --no-cache-dir --no-build-isolation "xformers>=0.0.30"
+# If you get "cannot allocate memory" error, reduce MAX_JOBS to 1
+RUN git clone --depth=1 --branch v0.0.33.post2 --recursive \
+    https://github.com/facebookresearch/xformers.git /tmp/xformers && \
+    cd /tmp/xformers && \
+    MAX_JOBS=1 TORCH_CUDA_ARCH_LIST="12.1" \
+    pip install -v --no-cache-dir --no-build-isolation . && \
+    cd / && \
+    rm -rf /tmp/xformers
 
 # Verify xformers installation
 RUN python3 -c "import xformers; print(f'xformers version: {xformers.__version__}')" || echo "Warning: xformers import failed, will use fallback attention"

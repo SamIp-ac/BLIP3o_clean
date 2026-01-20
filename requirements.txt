@@ -36,3 +36,4 @@ typing-extensions
 # uvicorn[standard]
 # httpx[http2]
 psutil>=5.9.0
+open-clip-torch

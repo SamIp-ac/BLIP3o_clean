@@ -26,7 +26,7 @@ COPY . /workspace
 # ---------------------------------------------------
 # Step 1: Install PyTorch 2.8.0 (CUDA 12.9 build)
 # ---------------------------------------------------
-RUN pip install --no-cache-dir torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 \
+RUN pip install --no-cache-dir torch==2.8.0+cu129 torchvision==0.23.0+cu129 torchaudio==2.8.0+cu129 \
     --index-url https://download.pytorch.org/whl/cu129
 
 # ---------------------------------------------------
