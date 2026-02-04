@@ -42,6 +42,10 @@ PROCESSOR = None
 TOKENIZER = None
 MODEL_LOCK = threading.Lock()
 
+# Semaphore to limit concurrent inference to 1 (serial processing)
+# Will be initialized in lifespan startup
+INFERENCE_SEMAPHORE = None
+
 # Configuration constants
 DEVICE = os.getenv("DEVICE", "mps")
 MODEL_PATH = None
@@ -101,15 +105,15 @@ def preprocess_image(
     resample_method = Image.Resampling.LANCZOS
 ) -> Image.Image:
     """
-    檢查圖片分辨率，如果任何一邊超過 max_size，就按比例縮小圖片。
+    Check image resolution, if any side exceeds max_size, resize the image proportionally.
     """
     width, height = image.size
 
     if width > max_size or height > max_size:
-        logger.info(f"圖片原始分辨率 ({width}x{height}) 過高，正在縮小...")
+        logger.info(f"Image resolution ({width}x{height}) is too high, resizing...")
         image.thumbnail((max_size, max_size), resample_method)
         new_width, new_height = image.size
-        logger.info(f"圖片已縮小至 ({new_width}x{new_height})。")
+        logger.info(f"Image resized to ({new_width}x{new_height}).")
 
     return image
 
@@ -182,12 +186,16 @@ def load_global_model_optimized(model_path: str):
             torch_dtype=torch.float16 if DEVICE != "cpu" else torch.float32
         )
 
-        # Compile model for better performance
-        logger.info("Compiling model...")
-        model_instance = torch.compile(model_instance, backend="aot_eager")
-        logger.info("Model compiled successfully")
+        # Compile model for better performance (optional)
+        if os.getenv("DISABLE_TORCH_COMPILE", "0").lower() not in {"1", "true", "yes"}:
+            logger.info("Compiling model...")
+            model_instance = torch.compile(model_instance, backend="aot_eager")
+            logger.info("Model compiled successfully")
+        else:
+            logger.info("Skipping torch.compile (DISABLE_TORCH_COMPILE=1)")
 
         model_instance = model_instance.to(DEVICE)
+        model_instance.eval()
         processor_instance = AutoProcessor.from_pretrained(
             "Qwen/Qwen2.5-VL-7B-Instruct",
             trust_remote_code=True
@@ -223,7 +231,20 @@ def chunk_document(images: List[Image.Image], max_images_per_chunk: int = MAX_CH
 
 def run_inference_optimized(prompt: str, images: List[Image.Image], max_new_tokens: int = MAX_NEW_TOKENS) -> str:
     """Optimized inference with better memory management and thread safety"""
-    with MODEL_LOCK:  # Protect against concurrent access to global MODEL and PROCESSOR
+    # Serial processing: entire inference is protected by lock to ensure only one request at a time
+    with MODEL_LOCK:
+        if MODEL is None or PROCESSOR is None:
+            raise RuntimeError("Model or processor not loaded")
+        
+        # Variables to track for cleanup
+        inputs = None
+        generated_ids = None
+        generated_ids_trimmed = None
+        image_inputs = None
+        text_prompt = None
+        messages = None
+        message_content = None
+        
         try:
             # Set random seed for each inference to avoid cache accumulation
             seed = random.randint(0, 2**31 - 1)
@@ -269,15 +290,32 @@ def run_inference_optimized(prompt: str, images: List[Image.Image], max_new_toke
             # Move to device
             inputs = inputs.to(DEVICE)
 
-            # Generate with optimized settings
-            with torch.no_grad():
-                generated_ids = MODEL.generate(
-                    **inputs,
-                    max_new_tokens=max_new_tokens,  # Use dynamic max_new_tokens from request
-                    do_sample=False,  # Deterministic for OCR tasks
-                    pad_token_id=PROCESSOR.tokenizer.eos_token_id,
-                    use_cache=True  # Enable KV cache for better performance
+            # Generate with optimized settings - Lock held to ensure serial processing
+            generation_max_time = float(os.getenv("GENERATION_MAX_TIME", "0") or 0)
+            if generation_max_time > 0:
+                logger.info(
+                    f"Starting model generation (max_new_tokens={max_new_tokens}, "
+                    f"max_time={generation_max_time}s)..."
                 )
+            else:
+                logger.info(f"Starting model generation (max_new_tokens={max_new_tokens})...")
+            import time
+            start_time = time.time()
+            
+            generation_kwargs = {
+                "max_new_tokens": max_new_tokens,  # Use dynamic max_new_tokens from request
+                "do_sample": False,  # Deterministic for OCR tasks
+                "pad_token_id": PROCESSOR.tokenizer.eos_token_id,
+                "use_cache": True
+            }
+            if generation_max_time > 0:
+                generation_kwargs["max_time"] = generation_max_time
+
+            with torch.no_grad():
+                generated_ids = MODEL.generate(**inputs, **generation_kwargs)
+            
+            elapsed_time = time.time() - start_time
+            logger.info(f"Model generation completed in {elapsed_time:.2f}s, output length: {generated_ids.shape[1]}")
 
             # Extract response
             input_token_len = inputs.input_ids.shape[1]
@@ -289,20 +327,54 @@ def run_inference_optimized(prompt: str, images: List[Image.Image], max_new_toke
                 clean_up_tokenization_spaces=False
             )[0]
 
-            return output_text.strip()
+            result = output_text.strip()
+            
+            # Force cleanup GPU memory after each inference
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()  # Ensure all CUDA operations are complete
+            elif torch.backends.mps.is_available() and DEVICE == "mps":
+                torch.mps.empty_cache()
+            
+            # Force garbage collection
+            gc.collect()
+            
+            logger.info("Memory cleanup completed after inference")
+            
+            return result
 
         except Exception as e:
             logger.error(f"Inference failed: {e}")
             traceback.print_exc()
             raise
         finally:
-            # Clean up tensors
-            if 'inputs' in locals():
-                del inputs
-            if 'generated_ids' in locals():
-                del generated_ids
-            if 'generated_ids_trimmed' in locals():
-                del generated_ids_trimmed
+            # Aggressive cleanup in case of any issues
+            try:
+                if inputs is not None:
+                    del inputs
+                if generated_ids is not None:
+                    del generated_ids
+                if generated_ids_trimmed is not None:
+                    del generated_ids_trimmed
+                if image_inputs is not None:
+                    del image_inputs
+                if 'text_prompt' in locals() and text_prompt is not None:
+                    del text_prompt
+                if 'messages' in locals() and messages is not None:
+                    del messages
+                if 'message_content' in locals() and message_content is not None:
+                    del message_content
+                
+                # Force cleanup GPU memory
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                elif torch.backends.mps.is_available() and DEVICE == "mps":
+                    torch.mps.empty_cache()
+                
+                gc.collect()
+            except Exception as cleanup_error:
+                logger.warning(f"Cleanup error in finally block: {cleanup_error}")
 
 # Pydantic models
 class InputText(BaseModel):
@@ -339,6 +411,9 @@ class OCRResponse(BaseModel):
 async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting BLIP3o FastAPI Server...")
+    global INFERENCE_SEMAPHORE
+    INFERENCE_SEMAPHORE = asyncio.Semaphore(1)  # Initialize semaphore for serial processing
+    logger.info("Initialized inference semaphore (concurrency limit: 1)")
     yield
     # Shutdown
     logger.info("Shutting down BLIP3o FastAPI Server...")
@@ -363,36 +438,55 @@ async def process_ocr_chunk(
     max_new_tokens: int = MAX_NEW_TOKENS
 ) -> OCRResponse:
     """Process a single chunk of the OCR task"""
-    try:
-        logger.info(f"Processing chunk {chunk_index + 1}/{total_chunks}")
+    # Use semaphore to ensure serial processing (only 1 inference at a time)
+    if INFERENCE_SEMAPHORE is None:
+        raise RuntimeError("Inference semaphore not initialized")
+    async with INFERENCE_SEMAPHORE:
+        logger.info(f"[Queue] Processing chunk {chunk_index + 1}/{total_chunks} (acquired lock, starting inference...)")
+        try:
+            logger.info(f"Processing chunk {chunk_index + 1}/{total_chunks}")
 
-        # Check memory before processing
-        if stats.should_cleanup():
+            # Always cleanup before processing to prevent memory accumulation
+            cleanup_memory()
+            
+            # Log GPU memory before inference if CUDA is available
+            if torch.cuda.is_available():
+                gpu_memory_before = torch.cuda.memory_allocated() / 1024**3  # GB
+                logger.info(f"GPU memory before inference: {gpu_memory_before:.2f} GB")
+
+            # Run inference in thread pool
+            result_text = await run_in_threadpool(
+                run_inference_optimized,
+                prompt=prompt,
+                images=images,
+                max_new_tokens=max_new_tokens
+            )
+
+            # Log GPU memory after inference if CUDA is available
+            if torch.cuda.is_available():
+                gpu_memory_after = torch.cuda.memory_allocated() / 1024**3  # GB
+                logger.info(f"GPU memory after inference: {gpu_memory_after:.2f} GB")
+
+            # Clean up images after processing
+            for img in images:
+                del img
+            del images
+
+            # Force cleanup after each chunk
             cleanup_memory()
 
-        # Run inference in thread pool
-        result_text = await run_in_threadpool(
-            run_inference_optimized,
-            prompt=prompt,
-            images=images,
-            max_new_tokens=max_new_tokens
-        )
+            return OCRResponse(
+                content=result_text,
+                chunk_index=chunk_index,
+                total_chunks=total_chunks,
+                memory_usage=stats.get_memory_usage()
+            )
 
-        # Clean up images after processing
-        for img in images:
-            del img
-        del images
-
-        return OCRResponse(
-            content=result_text,
-            chunk_index=chunk_index,
-            total_chunks=total_chunks,
-            memory_usage=stats.get_memory_usage()
-        )
-
-    except Exception as e:
-        logger.error(f"Chunk {chunk_index} processing failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Chunk processing failed: {str(e)[:100]}")
+        except Exception as e:
+            logger.error(f"Chunk {chunk_index} processing failed: {e}")
+            # Cleanup even on error
+            cleanup_memory()
+            raise HTTPException(status_code=500, detail=f"Chunk processing failed: {str(e)[:100]}")
 
 @app.post("/v1/chat/completions")
 async def create_chat_completion(request: OCRRequest, background_tasks: BackgroundTasks):
@@ -568,10 +662,12 @@ async def health_check():
     """Health check endpoint with system stats"""
     stats = SystemStats()
 
-    # Thread-safe model status check
+    # Thread-safe model status check - minimal lock time
     with MODEL_LOCK:
         model_loaded = MODEL is not None
         processor_loaded = PROCESSOR is not None
+        # Get device info if model is loaded (for logging)
+        device_info = f"{DEVICE}" if model_loaded else "unknown"
 
     return {
         "status": "healthy" if model_loaded and processor_loaded else "loading",
