@@ -325,8 +325,25 @@ def run_inference_optimized(prompt: str, images: List[Image.Image], max_new_toke
             if generation_max_time > 0:
                 generation_kwargs["max_time"] = generation_max_time
 
+            # Optional hard-exit watchdog for stuck CUDA calls (restarts process if enabled)
+            hard_exit_seconds = float(os.getenv("GENERATION_HARD_EXIT_SECONDS", "0") or 0)
+            watchdog_done = None
+            if hard_exit_seconds > 0:
+                watchdog_done = threading.Event()
+                def _hard_exit_watchdog():
+                    if not watchdog_done.wait(hard_exit_seconds):
+                        logger.error(
+                            f"Hard exit timeout reached ({hard_exit_seconds}s). "
+                            "Exiting process to recover from stuck generation."
+                        )
+                        os._exit(1)
+                threading.Thread(target=_hard_exit_watchdog, daemon=True).start()
+
             with torch.inference_mode():
                 generated_ids = MODEL.generate(**inputs, **generation_kwargs)
+
+            if watchdog_done is not None:
+                watchdog_done.set()
             
             elapsed_time = time.time() - start_time
             logger.info(f"Model generation completed in {elapsed_time:.2f}s, output length: {generated_ids.shape[1]}")
@@ -438,7 +455,7 @@ async def lifespan(app: FastAPI):
         logger.info("CPU executor shutdown completed")
 
 app = FastAPI(
-    title="BLIP3o OCR API v6.1",
+    title="BLIP3o OCR API v7.1",
     description="Optimized API for long document OCR with memory management",
     lifespan=lifespan
 )
@@ -455,56 +472,84 @@ async def process_ocr_chunk(
     # Use semaphore to ensure serial processing (only 1 inference at a time)
     if INFERENCE_SEMAPHORE is None:
         raise RuntimeError("Inference semaphore not initialized")
-    async with INFERENCE_SEMAPHORE:
-        logger.info(f"[Queue] Processing chunk {chunk_index + 1}/{total_chunks} (acquired lock, starting inference...)")
-        try:
-            logger.info(f"Processing chunk {chunk_index + 1}/{total_chunks}")
-
-            # Always cleanup before processing to prevent memory accumulation
-            cleanup_memory()
-            
-            # Log CUDA VRAM before inference if available
-            log_cuda_memory("before_inference")
-
-            # Run inference in thread pool
-            inference_start_time = time.time()
-            result_text = await run_in_threadpool(
-                run_inference_optimized,
-                prompt=prompt,
-                images=images,
-                max_new_tokens=max_new_tokens
-            )
-            inference_elapsed = time.time() - inference_start_time
-            warn_threshold = float(os.getenv("INFERENCE_WARN_SECONDS", "0") or 0)
-            if warn_threshold > 0 and inference_elapsed > warn_threshold:
-                logger.warning(
-                    f"Inference for chunk {chunk_index + 1}/{total_chunks} took "
-                    f"{inference_elapsed:.2f}s (warn threshold {warn_threshold}s)."
+    queue_wait_start = time.time()
+    await INFERENCE_SEMAPHORE.acquire()
+    queue_wait_elapsed = time.time() - queue_wait_start
+    queue_warn_threshold = float(os.getenv("INFERENCE_QUEUE_WARN_SECONDS", "0") or 0)
+    if queue_warn_threshold > 0 and queue_wait_elapsed > queue_warn_threshold:
+        logger.warning(
+            f"[Queue] Waited {queue_wait_elapsed:.2f}s to acquire inference lock "
+            f"(threshold {queue_warn_threshold}s)."
+        )
+    logger.info(f"[Queue] Processing chunk {chunk_index + 1}/{total_chunks} (acquired lock, starting inference...)")
+    try:
+        max_retries = int(os.getenv("INFERENCE_RETRY_COUNT", "1") or 1)
+        hard_timeout = float(os.getenv("INFERENCE_HARD_TIMEOUT", "120") or 120)
+        for attempt in range(max_retries + 1):
+            try:
+                logger.info(
+                    f"Processing chunk {chunk_index + 1}/{total_chunks} "
+                    f"(attempt {attempt + 1}/{max_retries + 1})"
                 )
 
-            # Log CUDA VRAM after inference if available
-            log_cuda_memory("after_inference")
+                # Always cleanup before processing to prevent memory accumulation
+                cleanup_memory()
+                
+                # Log CUDA VRAM before inference if available
+                log_cuda_memory("before_inference")
 
-            # Clean up images after processing
-            for img in images:
-                del img
-            del images
+                # Run inference in thread pool
+                inference_start_time = time.time()
+                inference_coro = run_in_threadpool(
+                    run_inference_optimized,
+                    prompt=prompt,
+                    images=images,
+                    max_new_tokens=max_new_tokens
+                )
+                result_text = await asyncio.wait_for(inference_coro, timeout=hard_timeout)
+                inference_elapsed = time.time() - inference_start_time
+                warn_threshold = float(os.getenv("INFERENCE_WARN_SECONDS", "0") or 0)
+                if warn_threshold > 0 and inference_elapsed > warn_threshold:
+                    logger.warning(
+                        f"Inference for chunk {chunk_index + 1}/{total_chunks} took "
+                        f"{inference_elapsed:.2f}s (warn threshold {warn_threshold}s)."
+                    )
 
-            # Force cleanup after each chunk
-            cleanup_memory()
+                # Log CUDA VRAM after inference if available
+                log_cuda_memory("after_inference")
 
-            return OCRResponse(
-                content=result_text,
-                chunk_index=chunk_index,
-                total_chunks=total_chunks,
-                memory_usage=stats.get_memory_usage()
-            )
+                # Clean up images after processing
+                for img in images:
+                    del img
+                del images
 
-        except Exception as e:
-            logger.error(f"Chunk {chunk_index} processing failed: {e}")
-            # Cleanup even on error
-            cleanup_memory()
-            raise HTTPException(status_code=500, detail=f"Chunk processing failed: {str(e)[:100]}")
+                # Force cleanup after each chunk
+                cleanup_memory()
+
+                return OCRResponse(
+                    content=result_text,
+                    chunk_index=chunk_index,
+                    total_chunks=total_chunks,
+                    memory_usage=stats.get_memory_usage()
+                )
+
+            except asyncio.TimeoutError:
+                logger.error(
+                    f"Inference hard timeout after {hard_timeout}s for chunk "
+                    f"{chunk_index + 1}/{total_chunks} (attempt {attempt + 1})."
+                )
+                cleanup_memory()
+                if attempt >= max_retries:
+                    raise HTTPException(status_code=504, detail="Inference timed out")
+                logger.info("Retrying the same chunk after timeout...")
+                continue
+            except Exception as e:
+                logger.error(f"Chunk {chunk_index} processing failed: {e}")
+                # Cleanup even on error
+                cleanup_memory()
+                raise HTTPException(status_code=500, detail=f"Chunk processing failed: {str(e)[:100]}")
+    finally:
+        INFERENCE_SEMAPHORE.release()
 
 @app.post("/v1/chat/completions")
 async def create_chat_completion(request: OCRRequest, background_tasks: BackgroundTasks):
@@ -727,7 +772,7 @@ def read_root():
     }
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="BLIP3o OCR FastAPI Server v6")
+    parser = argparse.ArgumentParser(description="BLIP3o OCR FastAPI Server v7")
     parser.add_argument("model_path", type=str, help="Path to the local BLIP3o model directory.")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to run the server on.")
     parser.add_argument("--port", type=int, default=9998, help="Port to run the server on.")
@@ -758,7 +803,7 @@ if __name__ == "__main__":
     MAX_IMAGE_SIZE = args.max_image_size
     MAX_CHUNK_SIZE = args.chunk_size
 
-    logger.info("🚀 Initializing BLIP3o OCR FastAPI Server v6...")
+    logger.info("🚀 Initializing BLIP3o OCR FastAPI Server v7...")
     logger.info(f"Device: {DEVICE}")
     logger.info(f"Max image size: {MAX_IMAGE_SIZE}")
     logger.info(f"Chunk size: {MAX_CHUNK_SIZE}")
