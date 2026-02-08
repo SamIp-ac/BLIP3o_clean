@@ -50,7 +50,7 @@ INFERENCE_SEMAPHORE = None
 DEVICE = os.getenv("DEVICE", "mps")
 MODEL_PATH = None
 MAX_IMAGE_SIZE = 1024
-MAX_CHUNK_SIZE = 3  # Maximum number of images to process at once
+MAX_CHUNK_SIZE = 1  # Maximum number of images to process at once
 MEMORY_THRESHOLD = 0.85  # Clean up if memory usage exceeds 85%
 MAX_TOKENS = 4096  # Increased default for longer OCR content
 MAX_NEW_TOKENS = 2048  # Increased default for longer responses
@@ -80,6 +80,17 @@ class SystemStats:
     def should_cleanup(self) -> bool:
         """Check if cleanup is needed based on memory usage"""
         return self.get_memory_usage() > MEMORY_THRESHOLD
+
+def log_cuda_memory(stage: str):
+    """Log CUDA VRAM stats to diagnose cache vs leak behavior."""
+    if torch.cuda.is_available() and DEVICE == "cuda":
+        allocated_gb = torch.cuda.memory_allocated() / 1024**3
+        reserved_gb = torch.cuda.memory_reserved() / 1024**3
+        peak_allocated_gb = torch.cuda.max_memory_allocated() / 1024**3
+        logger.info(
+            f"[CUDA VRAM] {stage} | allocated={allocated_gb:.2f}GB "
+            f"reserved={reserved_gb:.2f}GB peak_allocated={peak_allocated_gb:.2f}GB"
+        )
 
 def cleanup_memory():
     """Aggressive memory cleanup"""
@@ -311,7 +322,7 @@ def run_inference_optimized(prompt: str, images: List[Image.Image], max_new_toke
             if generation_max_time > 0:
                 generation_kwargs["max_time"] = generation_max_time
 
-            with torch.no_grad():
+            with torch.inference_mode():
                 generated_ids = MODEL.generate(**inputs, **generation_kwargs)
             
             elapsed_time = time.time() - start_time
@@ -424,7 +435,7 @@ async def lifespan(app: FastAPI):
         logger.info("CPU executor shutdown completed")
 
 app = FastAPI(
-    title="BLIP3o OCR API v4",
+    title="BLIP3o OCR API v6",
     description="Optimized API for long document OCR with memory management",
     lifespan=lifespan
 )
@@ -449,10 +460,8 @@ async def process_ocr_chunk(
             # Always cleanup before processing to prevent memory accumulation
             cleanup_memory()
             
-            # Log GPU memory before inference if CUDA is available
-            if torch.cuda.is_available():
-                gpu_memory_before = torch.cuda.memory_allocated() / 1024**3  # GB
-                logger.info(f"GPU memory before inference: {gpu_memory_before:.2f} GB")
+            # Log CUDA VRAM before inference if available
+            log_cuda_memory("before_inference")
 
             # Run inference in thread pool
             result_text = await run_in_threadpool(
@@ -462,10 +471,8 @@ async def process_ocr_chunk(
                 max_new_tokens=max_new_tokens
             )
 
-            # Log GPU memory after inference if CUDA is available
-            if torch.cuda.is_available():
-                gpu_memory_after = torch.cuda.memory_allocated() / 1024**3  # GB
-                logger.info(f"GPU memory after inference: {gpu_memory_after:.2f} GB")
+            # Log CUDA VRAM after inference if available
+            log_cuda_memory("after_inference")
 
             # Clean up images after processing
             for img in images:
@@ -696,7 +703,7 @@ def read_root():
         model_ready = MODEL is not None
 
     return {
-        "status": "BLIP3o OCR API v4 is running" if model_ready else "BLIP3o OCR API v4 is starting",
+        "status": "BLIP3o OCR API is running" if model_ready else "BLIP3o OCR API is starting",
         "version": "3.0",
         "features": [
             "Memory management",
@@ -709,7 +716,7 @@ def read_root():
     }
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="BLIP3o OCR FastAPI Server v3")
+    parser = argparse.ArgumentParser(description="BLIP3o OCR FastAPI Server v6")
     parser.add_argument("model_path", type=str, help="Path to the local BLIP3o model directory.")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to run the server on.")
     parser.add_argument("--port", type=int, default=9998, help="Port to run the server on.")
@@ -740,7 +747,7 @@ if __name__ == "__main__":
     MAX_IMAGE_SIZE = args.max_image_size
     MAX_CHUNK_SIZE = args.chunk_size
 
-    logger.info("🚀 Initializing BLIP3o OCR FastAPI Server v3...")
+    logger.info("🚀 Initializing BLIP3o OCR FastAPI Server v6...")
     logger.info(f"Device: {DEVICE}")
     logger.info(f"Max image size: {MAX_IMAGE_SIZE}")
     logger.info(f"Chunk size: {MAX_CHUNK_SIZE}")

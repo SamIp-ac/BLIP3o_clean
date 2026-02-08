@@ -50,7 +50,7 @@ INFERENCE_SEMAPHORE = None
 DEVICE = os.getenv("DEVICE", "mps")
 MODEL_PATH = None
 MAX_IMAGE_SIZE = 1024
-MAX_CHUNK_SIZE = 3  # Maximum number of images to process at once
+MAX_CHUNK_SIZE = 1  # Maximum number of images to process at once
 MEMORY_THRESHOLD = 0.85  # Clean up if memory usage exceeds 85%
 MAX_TOKENS = 4096  # Increased default for longer OCR content
 MAX_NEW_TOKENS = 2048  # Increased default for longer responses
@@ -424,7 +424,7 @@ async def lifespan(app: FastAPI):
         logger.info("CPU executor shutdown completed")
 
 app = FastAPI(
-    title="BLIP3o OCR API v4",
+    title="BLIP3o OCR API v5",
     description="Optimized API for long document OCR with memory management",
     lifespan=lifespan
 )
