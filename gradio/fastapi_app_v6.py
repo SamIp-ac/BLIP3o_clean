@@ -1,6 +1,4 @@
-# fastapi_app_v3.py - Optimized BLIP3o FastAPI Server for Long Document OCR
-# This version addresses memory leaks, high CPU usage, and performance issues
-# for long document OCR tasks with proper resource management and chunking
+# fastapi_app_v6.py
 
 import os
 import sys
