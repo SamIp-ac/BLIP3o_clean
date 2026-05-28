@@ -1,8 +1,7 @@
 """
-fastapi_app_v10.py
+fastapi_app_v11.py
 
-v10 is based on fastapi_app_v8, with runtime defaults embedded in code so
-Task Scheduler / service mode can start without requiring env vars in command.
+v11 extends v10 with concurrent LLM OCR workers (default: 2 in-flight tasks).
 """
 
 import os
@@ -11,6 +10,8 @@ import time
 import argparse
 import asyncio
 import logging
+import threading
+from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
 
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
@@ -41,6 +42,13 @@ OCR_CONTRAST_FACTOR = float(os.getenv("OCR_CONTRAST_FACTOR", "1.08"))
 OCR_UNSHARP_RADIUS = float(os.getenv("OCR_UNSHARP_RADIUS", "1.2"))
 OCR_UNSHARP_PERCENT = int(os.getenv("OCR_UNSHARP_PERCENT", "140"))
 OCR_UNSHARP_THRESHOLD = int(os.getenv("OCR_UNSHARP_THRESHOLD", "2"))
+
+# Concurrent LLM OCR slots (default 2). Override via OCR_LLM_WORKERS env or --llm-workers.
+OCR_LLM_WORKERS = max(1, int(os.getenv("OCR_LLM_WORKERS", "2")))
+_ORIGINAL_MODEL_LOCK = base.MODEL_LOCK
+_INFERENCE_SLOT_LOCK = threading.Semaphore(OCR_LLM_WORKERS)
+_LLM_EXECUTOR = None
+_BASE_RUN_INFERENCE_OPTIMIZED = base.run_inference_optimized
 
 
 def preprocess_image(
@@ -113,20 +121,124 @@ async def preprocess_image_async(image: Image.Image) -> Image.Image:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(base.CPU_EXECUTOR, _preprocess)
     except Exception as e:
-        logger.error(f"Image preprocessing failed in v10: {e}")
+        logger.error(f"Image preprocessing failed in v11: {e}")
         return image
+
+
+def run_inference_optimized(prompt: str, images, max_new_tokens: int = None):
+    """
+    Allow up to OCR_LLM_WORKERS concurrent inferences on the shared model.
+    Model load still uses the original exclusive MODEL_LOCK.
+    """
+    if max_new_tokens is None:
+        max_new_tokens = base.MAX_NEW_TOKENS
+
+    old_lock = base.MODEL_LOCK
+    base.MODEL_LOCK = _INFERENCE_SLOT_LOCK
+    try:
+        return _BASE_RUN_INFERENCE_OPTIMIZED(
+            prompt,
+            images,
+            max_new_tokens=max_new_tokens,
+        )
+    finally:
+        base.MODEL_LOCK = old_lock
+
+
+async def process_ocr_chunk(
+    prompt: str,
+    images,
+    chunk_index: int,
+    total_chunks: int,
+    stats: base.SystemStats,
+    max_new_tokens: int = base.MAX_NEW_TOKENS,
+):
+    """v11 OCR chunk handler with configurable LLM concurrency."""
+    if base.INFERENCE_SEMAPHORE is None:
+        raise RuntimeError("Inference semaphore not initialized")
+
+    async with base.INFERENCE_SEMAPHORE:
+        logger.info(
+            f"[Queue] Processing chunk {chunk_index + 1}/{total_chunks} "
+            f"(llm_workers={OCR_LLM_WORKERS}, acquired slot, starting inference...)"
+        )
+        try:
+            base.cleanup_memory()
+            base.log_cuda_memory("before_inference")
+
+            inference_start_time = time.time()
+            loop = asyncio.get_event_loop()
+            result_text = await loop.run_in_executor(
+                _LLM_EXECUTOR,
+                run_inference_optimized,
+                prompt,
+                images,
+                max_new_tokens,
+            )
+            inference_elapsed = time.time() - inference_start_time
+            warn_threshold = float(os.getenv("INFERENCE_WARN_SECONDS", "0") or 0)
+            if warn_threshold > 0 and inference_elapsed > warn_threshold:
+                logger.warning(
+                    f"Inference for chunk {chunk_index + 1}/{total_chunks} took "
+                    f"{inference_elapsed:.2f}s (warn threshold {warn_threshold}s)."
+                )
+
+            base.log_cuda_memory("after_inference")
+
+            for img in images:
+                del img
+            del images
+            base.cleanup_memory()
+
+            return base.OCRResponse(
+                content=result_text,
+                chunk_index=chunk_index,
+                total_chunks=total_chunks,
+                memory_usage=stats.get_memory_usage(),
+            )
+        except Exception as e:
+            logger.error(f"Chunk {chunk_index} processing failed: {e}")
+            base.cleanup_memory()
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=500,
+                detail=f"Chunk processing failed: {str(e)[:100]}",
+            )
+
+
+@asynccontextmanager
+async def lifespan_v11(_app):
+    logger.info("Starting BLIP3o FastAPI Server v11...")
+    base.INFERENCE_SEMAPHORE = asyncio.Semaphore(OCR_LLM_WORKERS)
+    logger.info(f"Initialized inference semaphore (concurrency limit: {OCR_LLM_WORKERS})")
+    yield
+    logger.info("Shutting down BLIP3o FastAPI Server v11...")
+    base.cleanup_memory()
+    global _LLM_EXECUTOR
+    if _LLM_EXECUTOR:
+        _LLM_EXECUTOR.shutdown(wait=True)
+        logger.info("LLM executor shutdown completed")
+    if base.CPU_EXECUTOR:
+        base.CPU_EXECUTOR.shutdown(wait=True)
+        logger.info("CPU executor shutdown completed")
 
 
 # Set after model load; read by /health without acquiring MODEL_LOCK during OCR.
 _SERVICE_READY = False
 
 
-def _inference_busy() -> bool:
-    """True when an OCR request holds the inference semaphore."""
+def _inference_queue_state():
+    """Return (available_slots, max_slots)."""
     sem = base.INFERENCE_SEMAPHORE
     if sem is None:
-        return False
-    return getattr(sem, "_value", 1) == 0
+        return OCR_LLM_WORKERS, OCR_LLM_WORKERS
+    available = max(0, int(getattr(sem, "_value", OCR_LLM_WORKERS)))
+    return available, OCR_LLM_WORKERS
+
+
+def _inference_busy() -> bool:
+    available, max_slots = _inference_queue_state()
+    return available < max_slots
 
 
 def _wrap_load_global_model():
@@ -136,7 +248,8 @@ def _wrap_load_global_model():
         global _SERVICE_READY
         _SERVICE_READY = False
         try:
-            original(model_path)
+            with _ORIGINAL_MODEL_LOCK:
+                original(model_path)
             _SERVICE_READY = base.MODEL is not None and base.PROCESSOR is not None
         except Exception:
             _SERVICE_READY = False
@@ -153,7 +266,8 @@ async def health_check_nonblocking():
     stats = base.SystemStats()
     model_loaded = _SERVICE_READY or (base.MODEL is not None and base.PROCESSOR is not None)
     processor_loaded = model_loaded
-    busy = _inference_busy()
+    available_slots, max_slots = _inference_queue_state()
+    busy = available_slots < max_slots
 
     if not model_loaded:
         status = "loading"
@@ -170,6 +284,8 @@ async def health_check_nonblocking():
         "model_loaded": model_loaded,
         "processor_loaded": processor_loaded,
         "inference_busy": busy,
+        "llm_workers": max_slots,
+        "llm_slots_available": available_slots,
     }
 
 
@@ -185,14 +301,17 @@ def _replace_health_route():
 # Monkey patch v6 to reuse all API/business logic with improved preprocessing
 base.preprocess_image = preprocess_image
 base.preprocess_image_async = preprocess_image_async
+base.run_inference_optimized = run_inference_optimized
+base.process_ocr_chunk = process_ocr_chunk
 base.load_global_model_optimized = _wrap_load_global_model()
+base.app.router.lifespan_context = lifespan_v11
 _replace_health_route()
-base.app.title = "BLIP3o OCR API v10.0"
-base.app.description = "v8-based API with built-in runtime env defaults for service-mode startup"
+base.app.title = "BLIP3o OCR API v11.0"
+base.app.description = "v10-based API with concurrent LLM OCR workers and service-mode defaults"
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="BLIP3o OCR FastAPI Server v10")
+    parser = argparse.ArgumentParser(description="BLIP3o OCR FastAPI Server v11")
     parser.add_argument("model_path", type=str, help="Path to the local BLIP3o model directory.")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to run the server on.")
     parser.add_argument("--port", type=int, default=9998, help="Port to run the server on.")
@@ -209,7 +328,21 @@ if __name__ == "__main__":
         default=None,
         help="Number of CPU worker threads for image processing (default: auto-detect based on CPU cores)."
     )
+    parser.add_argument(
+        "--llm-workers",
+        type=int,
+        default=int(os.getenv("OCR_LLM_WORKERS", "2")),
+        help="Max concurrent LLM OCR tasks (default: 2).",
+    )
     args = parser.parse_args()
+
+    llm_workers = max(1, args.llm_workers)
+    globals()["OCR_LLM_WORKERS"] = llm_workers
+    globals()["_INFERENCE_SLOT_LOCK"] = threading.Semaphore(llm_workers)
+    globals()["_LLM_EXECUTOR"] = ThreadPoolExecutor(
+        max_workers=llm_workers,
+        thread_name_prefix="llm_worker",
+    )
 
     # Initialize CPU executor similarly to v8
     if args.cpu_workers is None:
@@ -228,11 +361,12 @@ if __name__ == "__main__":
     base.MAX_IMAGE_SIZE = args.max_image_size
     base.MAX_CHUNK_SIZE = args.chunk_size
 
-    logger.info("Initializing BLIP3o OCR FastAPI Server v10...")
+    logger.info("Initializing BLIP3o OCR FastAPI Server v11...")
     logger.info(f"Device: {base.DEVICE}")
     logger.info(f"Max image size: {base.MAX_IMAGE_SIZE}")
     logger.info(f"Chunk size: {base.MAX_CHUNK_SIZE}")
     logger.info(f"CPU workers: {args.cpu_workers}")
+    logger.info(f"LLM workers (concurrent OCR): {llm_workers}")
     logger.info(
         "Runtime defaults (effective): PYTORCH_CUDA_ALLOC_CONF=%s, INFERENCE_WARN_SECONDS=%s, "
         "DISABLE_TORCH_COMPILE=%s, GENERATION_MAX_TIME=%s, DEVICE=%s",
