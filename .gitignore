@@ -1,3 +1,5 @@
 .DS_Store
 gradio/__pycache__/APIs.cpython-311.pyc
 blip3o/.DS_Store
+blip3o/.DS_Store
+gradio/__pycache__/fastapi_app_v12.cpython-310.pyc
