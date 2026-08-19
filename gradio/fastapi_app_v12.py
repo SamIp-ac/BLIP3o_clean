@@ -45,7 +45,7 @@ OCR_UNSHARP_PERCENT = int(os.getenv("OCR_UNSHARP_PERCENT", "140"))
 OCR_UNSHARP_THRESHOLD = int(os.getenv("OCR_UNSHARP_THRESHOLD", "2"))
 
 # LLM parallel slots (default 1 = same as v10). Set via --llm-workers or OCR_LLM_WORKERS.
-OCR_LLM_WORKERS = max(1, int(os.getenv("OCR_LLM_WORKERS", "1")))
+OCR_LLM_WORKERS = max(2, int(os.getenv("OCR_LLM_WORKERS", "2")))
 _INFERENCE_SLOT_LOCK = threading.Semaphore(OCR_LLM_WORKERS)
 _BASE_RUN_INFERENCE_OPTIMIZED = base.run_inference_optimized
 
